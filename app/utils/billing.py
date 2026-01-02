@@ -1,36 +1,30 @@
 import os
+from fastapi import HTTPException, Request, Header
+import hashlib
 import uuid
-import stripe
-import time
-from fastapi import HTTPException, Request
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-SUBSCRIPTION_ITEM_ID = "si_Tij7RECZ3mF3Zc"  # From Stripe dashboard subscription
 COINBASE_BASE_ADDRESS = os.getenv("COINBASE_BASE_ADDRESS")
+PAYMENT_AMOUNT_USD = 0.002  # Per scrape
 
-async def check_billing(request: Request):
-    api_key = request.headers.get("X-API-Key")
+async def check_agent_payment(request: Request, x_agent_id: str = Header(None)):
+    # Generate unique payment address per request/agent
+    request_id = str(uuid.uuid4())
+    payment_hash = hashlib.sha256(f"{x_agent_id}{request_id}".encode()).hexdigest()
+    agent_address = f"0x{payment_hash[:40]}"  # Deterministic per agent+request
     
-    if api_key and api_key.startswith("sk_"):
-        # Record REAL Stripe usage
-        stripe.UsageRecord.create(
-            subscription_item=SUBSCRIPTION_ITEM_ID,
-            quantity=1,  # 1 API call
-            timestamp=int(time.time()),
-            action="increment"
-        )
-        print(f"💳 Stripe usage recorded: {api_key[:8]}...")
-        return
+    # For MVP: Assume agents pay to main address, verify later
+    # Production: Check blockchain tx via Alchemy API
     
-    # x402 Crypto
-    raise HTTPException(
-        status_code=402,
-        detail={
-            "error": "Payment Required",
-            "type": "x402",
-            "amount": 0.01,
-            "currency": "USDC",
-            "address": COINBASE_BASE_ADDRESS,
-            "chain": "base"
-        }
-    )
+    detail = {
+        "error": "Payment Required",
+        "type": "x402",
+        "request_id": request_id,
+        "agent_id": x_agent_id or "anonymous",
+        "amount_usd": PAYMENT_AMOUNT_USD,
+        "amount_usdc": PAYMENT_AMOUNT_USD,
+        "address": COINBASE_BASE_ADDRESS,  # Collect all here
+        "chain": "base",
+        "memo": f"{x_agent_id[:8]}-{request_id[:8]}"
+    }
+    
+    raise HTTPException(status_code=402, detail=detail)
