@@ -1,33 +1,36 @@
 import os
-import time
+import uuid
 import stripe
+import time
 from fastapi import HTTPException, Request
-from typing import Dict
 
-# Load from environment (NEVER hard-code)
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
-COINBASE_BASE_ADDRESS = os.getenv("COINBASE_BASE_ADDRESS", "0xF0f61cB32d7D963B24a500E1D484b8e1e8fddD20")
+SUBSCRIPTION_ITEM_ID = "si_Tij7RECZ3mF3Zc"  # From Stripe dashboard subscription
+COINBASE_BASE_ADDRESS = os.getenv("COINBASE_BASE_ADDRESS")
 
-async def check_billing(request: Request) -> bool:
+async def check_billing(request: Request):
     api_key = request.headers.get("X-API-Key")
     
-    # HUMAN PATH: Stripe Metered
     if api_key and api_key.startswith("sk_"):
-        print(f"✅ Stripe billing logged for key: {api_key[:8]}...")
-        # TODO: await record_stripe_usage(api_key)
-        return True
+        # Record REAL Stripe usage
+        stripe.UsageRecord.create(
+            subscription_item=SUBSCRIPTION_ITEM_ID,
+            quantity=1,  # 1 API call
+            timestamp=int(time.time()),
+            action="increment"
+        )
+        print(f"💳 Stripe usage recorded: {api_key[:8]}...")
+        return
     
-    # AGENT PATH: x402
-    payment_details = {
-        "error": "Payment Required",
-        "type": "x402_payment_required",
-        "detail": "Pay 0.01 USDC to continue.",
-        "payment_info": {
+    # x402 Crypto
+    raise HTTPException(
+        status_code=402,
+        detail={
+            "error": "Payment Required",
+            "type": "x402",
             "amount": 0.01,
             "currency": "USDC",
-            "address": COINBASE_BASE_ADDRESS,  # Your static address (fine for MVP)
+            "address": COINBASE_BASE_ADDRESS,
             "chain": "base"
         }
-    }
-    raise HTTPException(status_code=402, detail=payment_details)
+    )
