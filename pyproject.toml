@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-agent-hub"
+version = "1.0.0"
+description = "LangChain tool for Hour.IT Agent Hub - Crypto-native AI services"
+readme = "README_LANGCHAIN_PACKAGE.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["langchain", "ai", "crypto", "payments", "usdc", "base", "blockchain"]
+authors = [
+    {name = "Hour.IT Team"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "langchain>=0.1.0",
+    "requests>=2.31.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://web-production-4833.up.railway.app"
+Documentation = "https://web-production-4833.up.railway.app/docs"
+Repository = "https://github.com/SVG-campus/agent-hub"
