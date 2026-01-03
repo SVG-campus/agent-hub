@@ -11,12 +11,13 @@ from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from google import genai
 from google.genai import types
+import json
+import re
 
 load_dotenv()
 
-# 👇 FIXED: Using GOOGLE_API_KEY instead of GEMINI_API_KEY
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")  # Default fallback
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
 client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 app = FastAPI(
@@ -33,7 +34,7 @@ app = FastAPI(
 TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
 SERVER_WALLET = os.getenv("SERVER_WALLET_ADDRESS", "0xDE8A632E7386A919b548352e0CB57DaCE566BbB5")
 
-# 🧪 TEMPORARY TEST PRICING (Uncomment for testing - all services $0.01)
+# 🧪 TEMPORARY TEST PRICING
 PRICING = {
     "sentiment": 0.01,
     "translate": 0.01,
@@ -78,6 +79,23 @@ PRICING = {
 # }
 
 payment_verifier = PaymentVerifier(SERVER_WALLET)
+
+def extract_json_from_response(text: str) -> dict:
+    """Extract JSON from Gemini response, handling markdown code blocks"""
+    # Remove markdown code blocks if present
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```\s*', '', text)
+    text = text.strip()
+    
+    # Try to parse as JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # If that fails, try to find JSON object in the text
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        raise ValueError(f"Could not extract valid JSON from response: {text[:200]}")
 
 def require_payment(service: str, payment_signature: Optional[str] = None) -> Optional[JSONResponse]:
     if TEST_MODE:
@@ -154,9 +172,9 @@ async def sentiment_analysis(request: SentimentRequest, payment_signature: Optio
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
-        prompt = f"Analyze the sentiment of this text and respond with ONLY a JSON object containing 'sentiment' (positive/negative/neutral) and 'score' (float between -1 and 1):\n\n{request.text}"
+        prompt = f"Analyze the sentiment of this text and respond with ONLY a JSON object containing 'sentiment' (positive/negative/neutral) and 'score' (float between -1 and 1). Do not include markdown formatting or code blocks.\n\nText: {request.text}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        result = eval(response.text.strip())
+        result = extract_json_from_response(response.text)
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -251,10 +269,10 @@ async def extract_data(request: DataExtractionRequest, payment_signature: Option
             page_content = soup.get_text()[:8000]
         
         schema_str = str(request.extraction_schema) if request.extraction_schema else "title, description, main_content"
-        prompt = f"Extract the following fields from this webpage content: {schema_str}\n\nReturn ONLY a JSON object.\n\nContent:\n{page_content}"
+        prompt = f"Extract the following fields from this webpage content: {schema_str}\n\nReturn ONLY a valid JSON object without markdown formatting or code blocks.\n\nContent:\n{page_content}"
         
         ai_response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        extracted = eval(ai_response.text.strip())
+        extracted = extract_json_from_response(ai_response.text)
         
         return {
             "status": "success",
@@ -328,10 +346,10 @@ async def code_review(request: CodeReviewRequest, payment_signature: Optional[st
         prompt = f"Review this {request.language} code. Check for:"
         if request.check_security: prompt += " security vulnerabilities,"
         if request.check_performance: prompt += " performance issues,"
-        prompt += " and code quality. Return a JSON with 'issues' (array), 'quality_score' (0-100), and 'recommendations'.\n\nCode:\n{request.code}"
+        prompt += f" and code quality. Return ONLY a valid JSON object (no markdown formatting) with 'issues' (array), 'quality_score' (0-100), and 'recommendations' (array).\n\nCode:\n{request.code}"
         
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        result = eval(response.text.strip())
+        result = extract_json_from_response(response.text)
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -367,12 +385,12 @@ async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] =
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
-        prompt = f"Perform a SWOT analysis for {request.subject} in the {request.industry} industry. Return a JSON with 'strengths', 'weaknesses', 'opportunities', 'threats' (each as arrays)."
+        prompt = f"Perform a SWOT analysis for {request.subject} in the {request.industry} industry. Return ONLY a valid JSON object (no markdown formatting) with 'strengths', 'weaknesses', 'opportunities', 'threats' (each as arrays)."
         if request.include_recommendations:
             prompt += " Also include 'recommendations' array."
         
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        result = eval(response.text.strip())
+        result = extract_json_from_response(response.text)
         return {"status": "success", "subject": request.subject, "swot": result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -390,9 +408,9 @@ async def competitive_analysis(request: CompetitiveRequest, payment_signature: O
         results = list(ddgs.text(f"{request.company_domain} competitors analysis", max_results=5))
         context = "\n".join([r['body'] for r in results])
         
-        prompt = f"Based on this research, analyze {request.company_domain}. Return JSON with 'competitors' (array), 'market_position', 'strengths', 'weaknesses'.\n\nResearch:\n{context}"
+        prompt = f"Based on this research, analyze {request.company_domain}. Return ONLY a valid JSON object (no markdown formatting) with 'competitors' (array), 'market_position' (string), 'strengths' (array), 'weaknesses' (array).\n\nResearch:\n{context}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        result = eval(response.text.strip())
+        result = extract_json_from_response(response.text)
         return {"status": "success", "target": request.company_domain, **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
