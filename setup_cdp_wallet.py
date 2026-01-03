@@ -1,11 +1,12 @@
-import os
 import asyncio
+import os
+from cdp import CdpClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
 async def main():
-    print("🔑 Creating CDP Server Wallet\n")
+    print("🔑 Creating CDP Server Wallet (using cdp-sdk)\n")
     
     # Check credentials
     api_key_id = os.getenv("CDP_API_KEY_ID", "")
@@ -13,81 +14,72 @@ async def main():
     
     if not api_key_id or not api_key_secret:
         print("❌ Missing CDP credentials in .env!")
-        print("\n1. Go to: https://portal.cdp.coinbase.com/")
-        print("2. Create API key")
-        print("3. Add to .env:")
-        print("   CDP_API_KEY_ID=your_key_id")
-        print("   CDP_API_KEY_SECRET=your_key_secret")
         return
-    
+
+    print("✅ CDP credentials found")
+    print("🏗️  Initializing CDP client...")
+
     try:
-        # Correct import for coinbase-cdp-sdk
-        from coinbase.cdp import Cdp
-        
-        print("✅ CDP SDK loaded")
-        
-        # Configure CDP
-        Cdp.configure(api_key_id, api_key_secret)
-        
-        print("✅ CDP client initialized")
-        print("�� Creating server wallet on Base Sepolia...")
-        
-        # Create wallet
-        wallet = await Cdp.create_wallet(network_id="base-sepolia")
-        
-        wallet_address = wallet.default_address.address_id
-        
-        print(f"\n✅ Server wallet created!")
-        print(f"\n💰 Wallet Address:")
-        print(f"   {wallet_address}")
-        
-        # Request faucet
-        print(f"\n🚰 Requesting testnet USDC...")
-        
-        faucet_tx = await wallet.faucet()
-        
-        print(f"✅ Faucet requested!")
-        print(f"🔗 TX: https://sepolia.basescan.org/tx/{faucet_tx.transaction_hash}")
-        
-        # Save wallet data
-        wallet_data = wallet.export_data()
-        
-        with open("wallet_data.json", "w") as f:
-            import json
-            json.dump(wallet_data.to_dict(), f, indent=2)
-        
-        print(f"\n💾 Wallet data saved to wallet_data.json")
-        
-        # Update .env
-        print(f"\n📋 Updating .env...")
-        
-        with open(".env", "r") as f:
-            env_contents = f.read()
-        
-        if "SERVER_WALLET_ADDRESS=" in env_contents:
-            lines = env_contents.split("\n")
-            new_lines = []
-            for line in lines:
-                if line.startswith("SERVER_WALLET_ADDRESS="):
-                    new_lines.append(f"SERVER_WALLET_ADDRESS={wallet_address}")
-                else:
-                    new_lines.append(line)
-            env_contents = "\n".join(new_lines)
-        else:
-            env_contents += f"\nSERVER_WALLET_ADDRESS={wallet_address}\n"
-        
-        with open(".env", "w") as f:
-            f.write(env_contents)
-        
-        print(f"✅ Saved to .env")
-        print(f"\n🎉 CDP Server Wallet ready!")
-        print(f"\n⚠️  IMPORTANT: Keep wallet_data.json secure!")
-        
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("\nRun: pip install coinbase-cdp-sdk")
+        # Initialize CDP Client
+        # It automatically reads CDP_API_KEY_ID and CDP_API_KEY_SECRET from env
+        async with CdpClient() as cdp:
+            
+            print("📝 Creating EVM account on Base Sepolia...")
+            
+            # Create Account
+            account = await cdp.evm.create_account()
+            wallet_address = account.address
+            
+            print(f"\n✅ Account created!")
+            print(f"\n💰 Wallet Address:")
+            print(f"   {wallet_address}")
+            
+            # Request Faucet (USDC)
+            print(f"\n🚰 Requesting testnet USDC...")
+            
+            # Note: The SDK documentation says request_faucet returns a transaction hash string
+            faucet_hash = await cdp.evm.request_faucet(
+                address=wallet_address,
+                network="base-sepolia",
+                token="usdc"  # Request USDC
+            )
+            
+            print(f"✅ Faucet requested!")
+            print(f"🔗 TX: https://sepolia.basescan.org/tx/{faucet_hash}")
+            
+            # Update .env
+            print(f"\n📋 Updating .env file...")
+            
+            # Read current .env
+            try:
+                with open(".env", "r") as f:
+                    env_contents = f.read()
+            except FileNotFoundError:
+                env_contents = ""
+            
+            # Update SERVER_WALLET_ADDRESS
+            if "SERVER_WALLET_ADDRESS=" in env_contents:
+                lines = env_contents.split("\n")
+                new_lines = []
+                for line in lines:
+                    if line.startswith("SERVER_WALLET_ADDRESS="):
+                        new_lines.append(f"SERVER_WALLET_ADDRESS={wallet_address}")
+                    else:
+                        new_lines.append(line)
+                env_contents = "\n".join(new_lines)
+            else:
+                env_contents += f"\nSERVER_WALLET_ADDRESS={wallet_address}\n"
+            
+            with open(".env", "w") as f:
+                f.write(env_contents)
+            
+            print(f"✅ Saved to .env: SERVER_WALLET_ADDRESS={wallet_address}")
+            print(f"\n🎉 Setup complete!")
+
     except Exception as e:
         print(f"❌ Error: {e}")
-        print(f"\nError type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
