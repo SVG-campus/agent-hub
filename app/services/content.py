@@ -1,10 +1,13 @@
 import os
-import openai
+import google.generativeai as genai
 from typing import List, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
+
 
 async def generate_content(
     topic: str,
@@ -13,32 +16,22 @@ async def generate_content(
     word_count: int = 500,
     keywords: Optional[List[str]] = None
 ) -> dict:
-    """
-    Generate SEO-optimized content
-    """
+    """Generate content with Gemini"""
     try:
         keyword_instruction = ""
         if keywords:
-            keyword_instruction = f"Include these keywords naturally: {', '.join(keywords)}"
+            keyword_instruction = f"Include keywords: {', '.join(keywords)}"
         
         prompts = {
             "article": f"Write a {word_count}-word {tone} article about {topic}. {keyword_instruction}",
-            "post": f"Write a {tone} social media post about {topic} ({word_count} chars max). {keyword_instruction}",
+            "post": f"Write a {tone} social media post about {topic} (~{word_count} chars). {keyword_instruction}",
             "email": f"Write a {tone} email about {topic} (~{word_count} words). {keyword_instruction}",
             "ad": f"Write a {tone} ad copy for {topic} (~{word_count} words). {keyword_instruction}"
         }
         
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": f"You are an expert {content_type} writer with SEO expertise."},
-                {"role": "user", "content": prompts.get(content_type, prompts["article"])}
-            ],
-            temperature=0.7,
-            max_tokens=word_count * 2
-        )
-        
-        content = response.choices[0].message.content
+        prompt = prompts.get(content_type, prompts["article"])
+        response = model.generate_content(prompt)
+        content = response.text
         
         return {
             "content": content,
@@ -47,114 +40,75 @@ async def generate_content(
             "tone": tone,
             "keywords_used": keywords or []
         }
-        
     except Exception as e:
         raise Exception(f"Content generation failed: {str(e)}")
 
 
 async def seo_optimize(content: str, target_keywords: List[str], level: str = "standard") -> dict:
-    """
-    Optimize content for SEO
-    """
+    """Optimize content for SEO with Gemini"""
     try:
         prompt = f"""Optimize this content for SEO targeting keywords: {', '.join(target_keywords)}
 
 Original content:
-{content}
+{content[:2000]}
 
-Provide:
-1. Optimized content with keywords naturally integrated
-2. SEO score (0-100)
-3. Suggestions for improvement
-4. Meta title and description
+Provide optimized version with keywords naturally integrated. Keep similar length."""
 
-Return as JSON."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are an SEO expert."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
-        
-        result = response.choices[0].message.content
+        response = model.generate_content(prompt)
         
         return {
-            "optimized_content": result,
+            "optimized_content": response.text,
             "target_keywords": target_keywords,
             "optimization_level": level
         }
-        
     except Exception as e:
         raise Exception(f"SEO optimization failed: {str(e)}")
 
 
 async def summarize_content(text: Optional[str] = None, urls: Optional[List[str]] = None, max_length: int = 200) -> dict:
-    """
-    Summarize text or web pages
-    """
+    """Summarize text or web pages with Gemini"""
     try:
         content_to_summarize = text or ""
         
         if urls:
             from app.services.scraper import scrape_url
-            for url in urls[:3]:  # Limit to 3 URLs
-                scraped = await scrape_url(url)
-                content_to_summarize += f"\n\n{scraped.get('text', '')}"
+            for url in urls[:3]:
+                try:
+                    scraped = await scrape_url(url)
+                    content_to_summarize += f"\n\n{scraped.get('text', '')}"
+                except:
+                    pass
         
-        prompt = f"Summarize the following in {max_length} words or less:\n\n{content_to_summarize[:5000]}"
+        if not content_to_summarize:
+            return {"summary": "No content provided.", "original_length": 0, "summary_length": 0}
         
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a summarization expert."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=max_length * 2
-        )
-        
-        summary = response.choices[0].message.content
+        prompt = f"Summarize in {max_length} words or less:\n\n{content_to_summarize[:5000]}"
+        response = model.generate_content(prompt)
+        summary = response.text
         
         return {
             "summary": summary,
             "original_length": len(content_to_summarize.split()),
             "summary_length": len(summary.split()),
-            "compression_ratio": round(len(summary) / len(content_to_summarize), 2)
+            "compression_ratio": round(len(summary) / max(len(content_to_summarize), 1), 2)
         }
-        
     except Exception as e:
         raise Exception(f"Summarization failed: {str(e)}")
 
 
 async def translate_content(text: str, target_lang: str, source_lang: Optional[str] = None) -> dict:
-    """
-    Translate text to target language
-    """
+    """Translate text with Gemini"""
     try:
-        source_instruction = f"from {source_lang}" if source_lang else "automatically detecting source language"
-        
+        source_instruction = f"from {source_lang}" if source_lang else "automatically detecting source"
         prompt = f"Translate this text {source_instruction} to {target_lang}:\n\n{text}"
         
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a professional translator."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
-        
-        translation = response.choices[0].message.content
+        response = model.generate_content(prompt)
         
         return {
             "original": text,
-            "translated": translation,
+            "translated": response.text,
             "source_language": source_lang or "auto",
             "target_language": target_lang
         }
-        
     except Exception as e:
         raise Exception(f"Translation failed: {str(e)}")

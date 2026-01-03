@@ -1,71 +1,79 @@
 import os
-import json
 from typing import Dict, List
-from tavily import TavilyClient
-import openai
+from ddgs import DDGS
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-openai.api_key = os.getenv("OPENAI_API_KEY")
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
+
+def search_web_free(query: str, max_results: int = 5) -> List[Dict]:
+    """Free web search using ddgs"""
+    print(f"🔍 Searching for: {query}")
+    try:
+        # CORRECT API: Pass query as first positional argument
+        results = DDGS().text(query, max_results=max_results)
+        
+        formatted = []
+        for r in results:
+            formatted.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "content": r.get("body", ""),
+                "score": 0.8
+            })
+        
+        print(f"✅ Found {len(formatted)} results")
+        return formatted
+    except Exception as e:
+        print(f"❌ Search error: {e}")
+        return []
+
 
 async def deep_research(query: str, depth: str = "standard", max_sources: int = 5) -> Dict:
-    """
-    Perform deep web research with multiple sources
-    """
+    """Deep web research"""
     try:
-        # 1. Search with Tavily
-        search_depth = "advanced" if depth == "deep" else "basic"
-        search_results = tavily_client.search(
-            query=query,
-            search_depth=search_depth,
-            max_results=max_sources
-        )
+        search_results = search_web_free(query, max_results=max_sources)
         
-        # 2. Extract sources and content
-        sources = []
-        content_chunks = []
+        if not search_results:
+            # Fallback to AI knowledge
+            try:
+                response = model.generate_content(f"Answer this query: {query}")
+                return {
+                    "answer": response.text,
+                    "insights": ["Answered from AI knowledge (search unavailable)"],
+                    "sources": [],
+                    "confidence": 60,
+                    "depth": "knowledge-fallback"
+                }
+            except:
+                return {
+                    "answer": "No results found.",
+                    "insights": [],
+                    "sources": [],
+                    "confidence": 0,
+                    "depth": depth
+                }
         
-        for result in search_results.get('results', []):
-            sources.append({
-                "title": result.get('title', ''),
-                "url": result.get('url', ''),
-                "score": result.get('score', 0)
-            })
-            content_chunks.append(result.get('content', ''))
+        sources = [{"title": r["title"], "url": r["url"], "score": r["score"]} for r in search_results]
+        content_text = "\n\n".join([f"Source: {r['title']}\n{r['content']}" for r in search_results])
         
-        # 3. Synthesize with GPT-4
-        combined_content = "\n\n".join(content_chunks[:5])
-        
-        synthesis_prompt = f"""Based on the following research sources, provide a comprehensive answer to: "{query}"
+        prompt = f"""Based on these sources, answer: "{query}"
 
-Research Sources:
-{combined_content}
+Sources:
+{content_text[:5000]}
 
-Provide:
-1. A clear, well-structured answer
-2. Key insights
-3. Confidence level (0-100%)
+Provide clear answer with insights (under 300 words)."""
 
-Format as JSON with keys: answer, insights, confidence"""
-
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a research analyst providing accurate, well-sourced answers."},
-                {"role": "user", "content": synthesis_prompt}
-            ],
-            temperature=0.3
-        )
-        
-        result = json.loads(response.choices[0].message.content)
+        response = model.generate_content(prompt)
         
         return {
-            "answer": result.get("answer", ""),
-            "insights": result.get("insights", []),
+            "answer": response.text,
+            "insights": [f"Source {i+1}: {s['title']}" for i, s in enumerate(sources[:3])],
             "sources": sources,
-            "confidence": result.get("confidence", 80),
+            "confidence": 85,
             "depth": depth
         }
         
@@ -74,53 +82,26 @@ Format as JSON with keys: answer, insights, confidence"""
 
 
 async def competitive_analysis(domain: str, analysis_type: str = "full") -> Dict:
-    """
-    Analyze competitor: pricing, features, marketing, traffic
-    """
+    """Analyze competitor"""
     try:
-        # Search for competitor info
-        queries = [
-            f"{domain} pricing plans features",
-            f"{domain} customer reviews complaints",
-            f"{domain} marketing strategy traffic",
-            f"alternatives to {domain}"
-        ]
+        queries = [f"{domain} pricing", f"{domain} reviews", f"alternatives to {domain}"]
         
         all_results = []
-        for query in queries:
-            results = tavily_client.search(query=query, max_results=3)
-            all_results.extend(results.get('results', []))
+        for q in queries:
+            all_results.extend(search_web_free(q, max_results=2))
         
-        # Synthesize competitive intelligence
-        content = "\n\n".join([r.get('content', '') for r in all_results])
+        if not all_results:
+            return {"domain": domain, "analysis": {"summary": "No data found."}, "sources": []}
         
-        prompt = f"""Analyze competitor {domain} based on this intelligence:
-
-{content}
-
-Provide JSON with:
-- pricing_strategy: their pricing model and tiers
-- key_features: main product features
-- strengths: what they do well
-- weaknesses: gaps and opportunities
-- market_position: how they position themselves
-- alternatives: top 3 competitors"""
-
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a competitive intelligence analyst."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
+        content = "\n\n".join([r.get("content", "") for r in all_results])
+        prompt = f"""Analyze {domain}:\n\n{content[:3000]}\n\nBrief analysis: pricing, features, position, competitors."""
         
-        analysis = json.loads(response.choices[0].message.content)
+        response = model.generate_content(prompt)
         
         return {
             "domain": domain,
-            "analysis": analysis,
-            "sources": [{"url": r.get('url'), "title": r.get('title')} for r in all_results[:5]]
+            "analysis": {"summary": response.text},
+            "sources": [{"url": r["url"], "title": r["title"]} for r in all_results[:5]]
         }
         
     except Exception as e:
@@ -128,47 +109,22 @@ Provide JSON with:
 
 
 async def market_intelligence(topic: str, timeframe: str = "30d") -> Dict:
-    """
-    Get market trends and intelligence on a topic
-    """
+    """Market trends"""
     try:
-        query = f"{topic} trends news insights {timeframe}"
-        results = tavily_client.search(
-            query=query,
-            search_depth="advanced",
-            max_results=10
-        )
+        results = search_web_free(f"{topic} trends news 2026", max_results=8)
         
-        content = "\n\n".join([r.get('content', '') for r in results.get('results', [])])
+        if not results:
+            return {"topic": topic, "timeframe": timeframe, "intelligence": {"summary": "No data found."}, "updated_at": "2026-01-02"}
         
-        prompt = f"""Analyze market intelligence for: {topic}
-
-Data:
-{content}
-
-Provide JSON with:
-- market_size: current market size and growth
-- key_trends: top 3-5 trends
-- opportunities: market opportunities
-- threats: potential risks
-- key_players: major companies/products
-- forecast: short-term outlook"""
-
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a market research analyst."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
+        content = "\n\n".join([r.get("content", "") for r in results])
+        prompt = f"""Market intelligence: {topic}\n\n{content[:3000]}\n\nBrief: trends, opportunities, players."""
         
-        intelligence = json.loads(response.choices[0].message.content)
+        response = model.generate_content(prompt)
         
         return {
             "topic": topic,
             "timeframe": timeframe,
-            "intelligence": intelligence,
+            "intelligence": {"summary": response.text},
             "updated_at": "2026-01-02"
         }
         

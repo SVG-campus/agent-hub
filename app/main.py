@@ -1,23 +1,39 @@
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from app.models import (
-    ResearchRequest, LeadGenRequest, ContentGenRequest,
-    CompetitiveRequest, SeoOptimizeRequest, SummarizeRequest,
-    TranslateRequest, SentimentRequest
-)
+import os
+from dotenv import load_dotenv
+
+# Import all services
+from app.services.scraper import scrape_url
 from app.services.research import deep_research, competitive_analysis, market_intelligence
 from app.services.content import generate_content, seo_optimize, summarize_content, translate_content
 from app.services.leads import generate_leads, enrich_contact
-import os
+from app.services.intelligence import sentiment_analysis, extract_data, find_emails, company_intelligence
+from app.services.bulk_content import bulk_generate_content, generate_social_schedule, generate_email_campaign
+from app.services.analysis import swot_analysis, trend_forecast, code_review
+
+# Import all models
+from app.models import (
+    ScrapeRequest, ResearchRequest, ContentGenRequest, LeadGenRequest,
+    CompetitiveRequest, SeoOptimizeRequest, SummarizeRequest, TranslateRequest,
+    SentimentRequest, DataExtractionRequest, EmailFinderRequest, CompanyIntelRequest,
+    BulkContentRequest, SocialScheduleRequest, EmailCampaignRequest,
+    SWOTRequest, TrendForecastRequest, CodeReviewRequest
+)
+
+from app.utils.billing import check_agent_payment
+
+load_dotenv()
 
 app = FastAPI(
     title="Agent Hub API",
-    description="Agent-native financial API with x402 payment support",
+    description="AI-powered services for autonomous agents with x402 payments",
     version="1.0.0"
 )
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,193 +42,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Models
-class WalletRequest(BaseModel):
-    agent_id: str
-    
-class TransferRequest(BaseModel):
-    from_wallet_id: str
-    to_address: str
-    amount: float
-    currency: str = "USDC"
-
-class ScrapeRequest(BaseModel):
-    url: str
-
-# Import services
-from app.services.wallet import create_agent_wallet, get_wallet_balance, send_transfer, get_transactions
-from app.services.scraper import scrape_url
-from app.utils.billing import check_agent_payment
-
-# Health check
 @app.get("/")
 async def root():
     return {
-        "status": "live",
-        "service": "Agent Hub API",
-        "endpoints": [
-            "/agent/wallet",
-            "/agent/balance/{wallet_id}",
-            "/agent/transfer",
-            "/agent/transactions/{wallet_id}",
-            "/v1/scrape"
-        ]
+        "name": "Agent Hub API",
+        "version": "1.0.0",
+        "services": {
+            "tier_1_data": ["/agent/scrape", "/agent/research", "/agent/sentiment", "/agent/extract-data", "/agent/find-emails", "/agent/company-intel"],
+            "tier_2_content": ["/agent/generate-content", "/agent/seo-optimize", "/agent/summarize", "/agent/translate", "/agent/bulk-content", "/agent/social-schedule", "/agent/email-campaign"],
+            "tier_3_analysis": ["/agent/competitive", "/agent/lead-gen", "/agent/swot", "/agent/forecast", "/agent/code-review"]
+        },
+        "payment": "x402 protocol (USDC on Base)",
+        "docs": "/docs"
     }
 
-# Phase 1: Core Financial Tools
-@app.post("/agent/wallet")
-async def create_wallet(payload: WalletRequest):
-    """Create a new wallet for an agent"""
-    try:
-        wallet = await create_agent_wallet(payload.agent_id)
-        return {
-            "status": "success",
-            "agent_id": payload.agent_id,
-            "wallet_id": wallet["wallet_id"],
-            "address": wallet["address"],
-            "network": wallet["network"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "services": "operational"}
 
-@app.get("/agent/balance/{wallet_id}")
-async def check_balance(wallet_id: str):
-    """Check USDC and ETH balance"""
-    try:
-        balance = await get_wallet_balance(wallet_id)
-        return {
-            "status": "success",
-            "wallet_id": wallet_id,
-            "balances": balance
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/agent/transfer")
-async def transfer_funds(payload: TransferRequest):
-    """Send USDC to another address"""
-    try:
-        result = await send_transfer(
-            wallet_id=payload.from_wallet_id,
-            to_address=payload.to_address,
-            amount=payload.amount,
-            currency=payload.currency
-        )
-        return {
-            "status": "success",
-            "transaction_hash": result["tx_hash"],
-            "amount": payload.amount,
-            "currency": payload.currency,
-            "to": payload.to_address
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# ========== ORIGINAL SERVICES ==========
 
-@app.get("/agent/transactions/{wallet_id}")
-async def list_transactions(wallet_id: str, limit: int = 10):
-    """Get transaction history"""
-    try:
-        txs = await get_transactions(wallet_id, limit)
-        return {
-            "status": "success",
-            "wallet_id": wallet_id,
-            "transactions": txs
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/agent/scrape")
+async def scrape(payload: ScrapeRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.002)
+    result = await scrape_url(payload.url)
+    return {"status": "success", "url": payload.url, **result}
 
-# Existing x402 scraper endpoint
-@app.post("/v1/scrape")
-async def run_scrape(
-    payload: ScrapeRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Web scraper with x402 payment support"""
-    await check_agent_payment(request, x_agent_id)
-    data = await scrape_url(payload.url)
-    return {"status": "success", "data": data, "verified": True}
-
-# app/main.py - add this endpoint
 
 @app.post("/agent/research")
-async def research(
-    payload: ResearchRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Deep web research with structured results"""
+async def research(payload: ResearchRequest, request: Request, x_agent_id: str = Header(None)):
     await check_agent_payment(request, x_agent_id, amount=0.10)
-    
-    result = await deep_research(payload.query, payload.depth)
-    return {
-        "status": "success",
-        "query": payload.query,
-        "answer": result["answer"],
-        "sources": result["sources"],
-        "confidence": result["confidence"]
-    }
-
-# ===== RESEARCH & INTELLIGENCE =====
-
-@app.post("/agent/research")
-async def research(
-    payload: ResearchRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Deep web research with structured results and sources"""
-    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("RESEARCH_PRICE", 0.10)))
-    
     result = await deep_research(payload.query, payload.depth, payload.max_sources)
-    return {
-        "status": "success",
-        "query": payload.query,
-        **result
-    }
+    return {"status": "success", "query": payload.query, **result}
+
 
 @app.post("/agent/competitive")
-async def competitive(
-    payload: CompetitiveRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Competitive intelligence and analysis"""
-    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("COMPETITIVE_PRICE", 0.50)))
-    
+async def competitive(payload: CompetitiveRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.50)
     result = await competitive_analysis(payload.company_domain, payload.analysis_type)
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
 
-@app.get("/agent/market-intel/{topic}")
-async def market_intel(
-    topic: str,
-    timeframe: str = "30d",
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Market trends and intelligence"""
-    await check_agent_payment(request, x_agent_id, amount=0.15)
-    
-    result = await market_intelligence(topic, timeframe)
-    return {
-        "status": "success",
-        **result
-    }
-
-# ===== CONTENT GENERATION =====
 
 @app.post("/agent/generate-content")
-async def gen_content(
-    payload: ContentGenRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Generate SEO-optimized content"""
-    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("CONTENT_GEN_PRICE", 0.20)))
-    
+async def gen_content(payload: ContentGenRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.20)
     result = await generate_content(
         payload.topic,
         payload.content_type,
@@ -220,67 +94,33 @@ async def gen_content(
         payload.word_count,
         payload.keywords
     )
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
+
 
 @app.post("/agent/seo-optimize")
-async def seo_opt(
-    payload: SeoOptimizeRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Optimize content for SEO"""
-    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("SEO_PRICE", 0.15)))
-    
+async def seo(payload: SeoOptimizeRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.15)
     result = await seo_optimize(payload.content, payload.target_keywords, payload.optimization_level)
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
+
 
 @app.post("/agent/summarize")
-async def summarize(
-    payload: SummarizeRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Summarize text or URLs"""
+async def summarize(payload: SummarizeRequest, request: Request, x_agent_id: str = Header(None)):
     await check_agent_payment(request, x_agent_id, amount=0.08)
-    
     result = await summarize_content(payload.text, payload.urls, payload.max_length)
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
+
 
 @app.post("/agent/translate")
-async def translate(
-    payload: TranslateRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Translate text to any language"""
+async def translate(payload: TranslateRequest, request: Request, x_agent_id: str = Header(None)):
     await check_agent_payment(request, x_agent_id, amount=0.05)
-    
     result = await translate_content(payload.text, payload.target_language, payload.source_language)
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
 
-# ===== LEAD GENERATION =====
 
 @app.post("/agent/lead-gen")
-async def lead_gen(
-    payload: LeadGenRequest,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Generate qualified leads"""
-    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("LEAD_GEN_PRICE", 0.25)))
-    
+async def lead_gen(payload: LeadGenRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.25)
     result = await generate_leads(
         payload.industry,
         payload.location,
@@ -288,22 +128,110 @@ async def lead_gen(
         payload.job_titles,
         payload.count
     )
-    return {
-        "status": "success",
-        **result
-    }
+    return {"status": "success", **result}
 
-@app.post("/agent/enrich/{domain}")
-async def enrich(
-    domain: str,
-    x_agent_id: str = Header(None),
-    request: Request = None
-):
-    """Enrich company/contact data"""
+
+# ========== TIER 1: DATA INTELLIGENCE ==========
+
+@app.post("/agent/sentiment")
+async def analyze_sentiment(payload: SentimentRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.05)
+    result = await sentiment_analysis(payload.text, payload.detailed, payload.language)
+    return {"status": "success", **result}
+
+
+@app.post("/agent/extract-data")
+async def extract(payload: DataExtractionRequest, request: Request, x_agent_id: str = Header(None)):
     await check_agent_payment(request, x_agent_id, amount=0.15)
-    
-    result = await enrich_contact(domain)
-    return {
-        "status": "success",
-        **result
-    }
+    result = await extract_data(payload.url, payload.schema, payload.format)
+    return {"status": "success", **result}
+
+
+@app.post("/agent/find-emails")
+async def find_email(payload: EmailFinderRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.20)
+    result = await find_emails(payload.domain, payload.role, payload.verify)
+    return {"status": "success", **result}
+
+
+@app.post("/agent/company-intel")
+async def company_intel(payload: CompanyIntelRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.30)
+    result = await company_intelligence(
+        payload.domain,
+        payload.include_funding,
+        payload.include_tech_stack,
+        payload.include_employees
+    )
+    return {"status": "success", **result}
+
+
+# ========== TIER 2: BULK CONTENT ==========
+
+@app.post("/agent/bulk-content")
+async def bulk_content(payload: BulkContentRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=1.00)
+    result = await bulk_generate_content(
+        payload.topics,
+        payload.content_type,
+        payload.tone,
+        payload.word_count
+    )
+    return {"status": "success", **result}
+
+
+@app.post("/agent/social-schedule")
+async def social_schedule(payload: SocialScheduleRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.50)
+    result = await generate_social_schedule(
+        payload.topic,
+        payload.platforms,
+        payload.posts_per_day,
+        payload.duration_days
+    )
+    return {"status": "success", **result}
+
+
+@app.post("/agent/email-campaign")
+async def email_campaign(payload: EmailCampaignRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.75)
+    result = await generate_email_campaign(
+        payload.product,
+        payload.target_audience,
+        payload.goal,
+        payload.num_emails
+    )
+    return {"status": "success", **result}
+
+
+# ========== TIER 3: ADVANCED ANALYSIS ==========
+
+@app.post("/agent/swot")
+async def swot(payload: SWOTRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.40)
+    result = await swot_analysis(payload.subject, payload.industry, payload.include_recommendations)
+    return {"status": "success", **result}
+
+
+@app.post("/agent/forecast")
+async def forecast(payload: TrendForecastRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.60)
+    result = await trend_forecast(payload.topic, payload.timeframe, payload.include_data)
+    return {"status": "success", **result}
+
+
+@app.post("/agent/code-review")
+async def review_code(payload: CodeReviewRequest, request: Request, x_agent_id: str = Header(None)):
+    await check_agent_payment(request, x_agent_id, amount=0.25)
+    result = await code_review(
+        payload.code,
+        payload.language,
+        payload.check_security,
+        payload.check_performance
+    )
+    return {"status": "success", **result}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
