@@ -9,16 +9,15 @@ from dotenv import load_dotenv
 import httpx
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
-
-# 👇 NEW: Updated Gemini Import
 from google import genai
 from google.genai import types
 
 load_dotenv()
 
-# 👇 NEW: Updated Gemini Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+# 👇 FIXED: Using GOOGLE_API_KEY instead of GEMINI_API_KEY
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")  # Default fallback
+client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 app = FastAPI(
     title="Agent Hub API",
@@ -34,27 +33,49 @@ app = FastAPI(
 TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
 SERVER_WALLET = os.getenv("SERVER_WALLET_ADDRESS", "0xDE8A632E7386A919b548352e0CB57DaCE566BbB5")
 
-# Pricing (in USD)
+# 🧪 TEMPORARY TEST PRICING (Uncomment for testing - all services $0.01)
 PRICING = {
-    "sentiment": 0.05,
-    "translate": 0.05,
-    "summarize": 0.08,
-    "extract": 0.10,
-    "scrape": 0.15,
-    "email_finder": 0.20,
-    "company_intel": 0.25,
-    "code_review": 0.50,
-    "research": 0.30,
-    "content_gen": 0.20,
-    "seo_optimize": 0.15,
-    "social_schedule": 0.40,
-    "email_campaign": 0.35,
-    "lead_gen": 2.00,
-    "competitive": 1.50,
-    "swot": 0.75,
-    "trend_forecast": 1.00,
-    "bulk_content": 1.00,
+    "sentiment": 0.01,
+    "translate": 0.01,
+    "summarize": 0.01,
+    "extract": 0.01,
+    "scrape": 0.01,
+    "email_finder": 0.01,
+    "company_intel": 0.01,
+    "code_review": 0.01,
+    "research": 0.01,
+    "content_gen": 0.01,
+    "seo_optimize": 0.01,
+    "social_schedule": 0.01,
+    "email_campaign": 0.01,
+    "lead_gen": 0.01,
+    "competitive": 0.01,
+    "swot": 0.01,
+    "trend_forecast": 0.01,
+    "bulk_content": 0.01,
 }
+
+# 💰 PRODUCTION PRICING (Uncomment when testing is done)
+# PRICING = {
+#     "sentiment": 0.05,
+#     "translate": 0.05,
+#     "summarize": 0.08,
+#     "extract": 0.10,
+#     "scrape": 0.15,
+#     "email_finder": 0.20,
+#     "company_intel": 0.25,
+#     "code_review": 0.50,
+#     "research": 0.30,
+#     "content_gen": 0.20,
+#     "seo_optimize": 0.15,
+#     "social_schedule": 0.40,
+#     "email_campaign": 0.35,
+#     "lead_gen": 2.00,
+#     "competitive": 1.50,
+#     "swot": 0.75,
+#     "trend_forecast": 1.00,
+#     "bulk_content": 1.00,
+# }
 
 payment_verifier = PaymentVerifier(SERVER_WALLET)
 
@@ -110,6 +131,8 @@ async def root():
         "test_mode": str(TEST_MODE).lower(),
         "server_wallet": SERVER_WALLET,
         "services_available": len(PRICING),
+        "gemini_configured": client is not None,
+        "gemini_model": GEMINI_MODEL if client else None,
         "endpoints": {"pricing": "/payment/pricing", "docs": "/docs"}
     }
 
@@ -128,12 +151,11 @@ async def sentiment_analysis(request: SentimentRequest, payment_signature: Optio
     if err := require_payment("sentiment", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         prompt = f"Analyze the sentiment of this text and respond with ONLY a JSON object containing 'sentiment' (positive/negative/neutral) and 'score' (float between -1 and 1):\n\n{request.text}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = eval(response.text.strip())
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
@@ -145,12 +167,11 @@ async def translate(request: TranslateRequest, payment_signature: Optional[str] 
     if err := require_payment("translate", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         prompt = f"Translate this text to {request.target_language}. Respond with ONLY the translated text:\n\n{request.text}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return {
             "status": "success",
             "original_text": request.text,
@@ -167,7 +188,7 @@ async def summarize(request: SummarizeRequest, payment_signature: Optional[str] 
     if err := require_payment("summarize", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         content = request.text or ""
@@ -182,8 +203,7 @@ async def summarize(request: SummarizeRequest, payment_signature: Optional[str] 
                         pass
         
         prompt = f"Summarize this content in approximately {request.max_length} words:\n\n{content[:10000]}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return {
             "status": "success",
             "summary": response.text.strip(),
@@ -222,7 +242,7 @@ async def extract_data(request: DataExtractionRequest, payment_signature: Option
     if err := require_payment("extract", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         async with httpx.AsyncClient() as c:
@@ -233,8 +253,7 @@ async def extract_data(request: DataExtractionRequest, payment_signature: Option
         schema_str = str(request.extraction_schema) if request.extraction_schema else "title, description, main_content"
         prompt = f"Extract the following fields from this webpage content: {schema_str}\n\nReturn ONLY a JSON object.\n\nContent:\n{page_content}"
         
-        # 👇 NEW: Updated call syntax
-        ai_response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        ai_response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         extracted = eval(ai_response.text.strip())
         
         return {
@@ -252,7 +271,7 @@ async def research_topic(request: ResearchRequest, payment_signature: Optional[s
     if err := require_payment("research", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         ddgs = DDGS()
@@ -260,8 +279,7 @@ async def research_topic(request: ResearchRequest, payment_signature: Optional[s
         sources_text = "\n\n".join([f"Source: {r['title']}\n{r['body']}" for r in results])
         
         prompt = f"Based on these search results, provide a comprehensive research summary about: {request.query}\n\nSources:\n{sources_text}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         
         return {
             "status": "success",
@@ -279,7 +297,7 @@ async def generate_content(request: ContentGenRequest, payment_signature: Option
     if err := require_payment("content_gen", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         keywords_str = ", ".join(request.keywords) if request.keywords else ""
@@ -287,8 +305,7 @@ async def generate_content(request: ContentGenRequest, payment_signature: Option
         if keywords_str:
             prompt += f" Include these keywords: {keywords_str}"
         
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return {
             "status": "success",
             "topic": request.topic,
@@ -305,7 +322,7 @@ async def code_review(request: CodeReviewRequest, payment_signature: Optional[st
     if err := require_payment("code_review", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         prompt = f"Review this {request.language} code. Check for:"
@@ -313,8 +330,7 @@ async def code_review(request: CodeReviewRequest, payment_signature: Optional[st
         if request.check_performance: prompt += " performance issues,"
         prompt += " and code quality. Return a JSON with 'issues' (array), 'quality_score' (0-100), and 'recommendations'.\n\nCode:\n{request.code}"
         
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = eval(response.text.strip())
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
@@ -326,13 +342,12 @@ async def seo_optimize(request: SeoOptimizeRequest, payment_signature: Optional[
     if err := require_payment("seo_optimize", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         keywords_str = ", ".join(request.target_keywords)
         prompt = f"Optimize this content for SEO with these keywords: {keywords_str}. Return the optimized version:\n\n{request.content}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         
         return {
             "status": "success",
@@ -349,15 +364,14 @@ async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] =
     if err := require_payment("swot", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         prompt = f"Perform a SWOT analysis for {request.subject} in the {request.industry} industry. Return a JSON with 'strengths', 'weaknesses', 'opportunities', 'threats' (each as arrays)."
         if request.include_recommendations:
             prompt += " Also include 'recommendations' array."
         
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = eval(response.text.strip())
         return {"status": "success", "subject": request.subject, "swot": result, "paid": not TEST_MODE}
     except Exception as e:
@@ -369,7 +383,7 @@ async def competitive_analysis(request: CompetitiveRequest, payment_signature: O
     if err := require_payment("competitive", payment_signature): return err
     
     if not client:
-        raise HTTPException(status_code=503, detail="Gemini API not configured")
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
     
     try:
         ddgs = DDGS()
@@ -377,8 +391,7 @@ async def competitive_analysis(request: CompetitiveRequest, payment_signature: O
         context = "\n".join([r['body'] for r in results])
         
         prompt = f"Based on this research, analyze {request.company_domain}. Return JSON with 'competitors' (array), 'market_position', 'strengths', 'weaknesses'.\n\nResearch:\n{context}"
-        # 👇 NEW: Updated call syntax
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = eval(response.text.strip())
         return {"status": "success", "target": request.company_domain, **result, "paid": not TEST_MODE}
     except Exception as e:
