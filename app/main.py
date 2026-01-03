@@ -671,6 +671,19 @@ async def bulk_content(request: BulkContentRequest, payment_signature: Optional[
         content_pieces = [{"topic": topic, "content": f"Content about {topic}...", "word_count": request.word_count} for topic in request.topics]
         return {"status": "success", "content_pieces": content_pieces, "paid": not TEST_MODE}
 
+@app.get("/privacy")
+async def privacy_policy():
+    return {
+        "service": "Agent Hub API",
+        "privacy_policy": {
+            "data_collection": "We do not collect or store personal data. All API requests are processed in real-time.",
+            "payments": "Payments are processed via Coinbase CDP on Base Sepolia testnet. We do not store payment information.",
+            "data_usage": "Request data is used only to fulfill the requested service and is not retained.",
+            "third_party": "We use Google Gemini AI for content generation and DuckDuckGo for web searches.",
+            "contact": "For privacy concerns, contact via GitHub repository."
+        }
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
