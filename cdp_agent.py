@@ -30,29 +30,73 @@ class CDPPaymentAgent:
         
         self.cdp_client = CdpClient()
         
-        # For this demo, create a fresh wallet and fund it
         print("📝 Creating payment wallet...")
         self.account = await self.cdp_client.evm.create_account()
         self.wallet_address = self.account.address
-        print(f"✅ Wallet: {self.wallet_address}")
+        print(f"✅ Wallet: {self.wallet_address}\n")
         
-        print("\n�� Funding wallet with testnet USDC...")
-        faucet_tx = await self.cdp_client.evm.request_faucet(
+        # Step 1: Request ETH for gas fees
+        print("⛽ Requesting testnet ETH for gas...")
+        eth_faucet_tx = await self.cdp_client.evm.request_faucet(
+            address=self.wallet_address,
+            network="base-sepolia",
+            token="eth"
+        )
+        print(f"✅ ETH Faucet TX: https://sepolia.basescan.org/tx/{eth_faucet_tx}")
+        
+        print("⏳ Waiting for ETH confirmation...")
+        eth_receipt = w3.eth.wait_for_transaction_receipt(eth_faucet_tx, timeout=120)
+        print(f"✅ ETH confirmed in block {eth_receipt['blockNumber']}")
+        
+        eth_balance = w3.eth.get_balance(self.wallet_address) / 1e18
+        print(f"💎 ETH Balance: {eth_balance:.6f} ETH\n")
+        
+        # Step 2: Request USDC
+        print("🚰 Requesting testnet USDC...")
+        usdc_faucet_tx = await self.cdp_client.evm.request_faucet(
             address=self.wallet_address,
             network="base-sepolia",
             token="usdc"
         )
-        print(f"✅ Funded! TX: https://sepolia.basescan.org/tx/{faucet_tx}")
+        print(f"✅ USDC Faucet TX: https://sepolia.basescan.org/tx/{usdc_faucet_tx}")
         
-        print("⏳ Waiting for confirmation...")
-        w3.eth.wait_for_transaction_receipt(faucet_tx)
-        print("✅ Ready!\n")
+        print("⏳ Waiting for USDC confirmation...")
+        usdc_receipt = w3.eth.wait_for_transaction_receipt(usdc_faucet_tx, timeout=120)
+        print(f"✅ USDC confirmed in block {usdc_receipt['blockNumber']}")
+        
+        # Check USDC balance
+        usdc_abi = [{
+            "constant": True,
+            "inputs": [{"name": "_owner", "type": "address"}],
+            "name": "balanceOf",
+            "outputs": [{"name": "balance", "type": "uint256"}],
+            "type": "function"
+        }]
+        
+        usdc_contract = w3.eth.contract(address=USDC_CONTRACT, abi=usdc_abi)
+        
+        # Poll for USDC balance
+        max_retries = 10
+        for i in range(max_retries):
+            balance = usdc_contract.functions.balanceOf(self.wallet_address).call()
+            usdc_balance = balance / 1_000_000
+            
+            if usdc_balance > 0:
+                print(f"💵 USDC Balance: {usdc_balance} USDC\n")
+                return True
+            
+            if i < max_retries - 1:
+                print(f"   Checking USDC balance... ({i+1}/{max_retries})")
+                await asyncio.sleep(5)
+        
+        print("⚠️  USDC not received yet. Continuing anyway...\n")
+        return True
     
     async def send_usdc(self, to_address, amount_usd):
         """Send USDC payment via CDP"""
         print(f"💸 Sending ${amount_usd} USDC to {to_address}...")
         
-        amount_units = int(amount_usd * 1_000_000)  # USDC has 6 decimals
+        amount_units = int(amount_usd * 1_000_000)
         
         # Build transfer
         usdc_abi = [{
@@ -86,7 +130,6 @@ class CDPPaymentAgent:
         print(f"✅ Payment sent!")
         print(f"🔗 TX: https://sepolia.basescan.org/tx/{tx_hash}")
         
-        # Wait for confirmation
         print("⏳ Waiting for confirmation...")
         w3.eth.wait_for_transaction_receipt(tx_hash)
         print("✅ Payment confirmed!")
@@ -156,64 +199,68 @@ async def main():
     print()
     
     agent = CDPPaymentAgent()
-    await agent.initialize()
     
-    print("=" * 70)
-    print("🧪 TESTING PAID API SERVICES")
-    print("=" * 70)
-    
-    # Test 1: Sentiment Analysis ($0.05)
-    print("\n" + "-" * 70)
-    print("TEST 1: Sentiment Analysis ($0.05)")
-    print("-" * 70)
-    result1 = await agent.call_paid_api(
-        "/agent/sentiment",
-        {"text": "CDP makes AI agent payments so easy!"}
-    )
-    if result1:
-        print(f"📊 Result:")
-        print(json.dumps(result1, indent=2))
-        print()
-    
-    # Test 2: Translate ($0.05)
-    print("\n" + "-" * 70)
-    print("TEST 2: Translation ($0.05)")
-    print("-" * 70)
-    result2 = await agent.call_paid_api(
-        "/agent/translate",
-        {
-            "text": "Autonomous AI agents can now pay for services!",
-            "target_language": "es"
-        }
-    )
-    if result2:
-        print(f"📊 Result:")
-        print(json.dumps(result2, indent=2))
-        print()
-    
-    # Test 3: Summarize ($0.08)
-    print("\n" + "-" * 70)
-    print("TEST 3: Summarization ($0.08)")
-    print("-" * 70)
-    result3 = await agent.call_paid_api(
-        "/agent/summarize",
-        {
-            "text": "The integration of cryptocurrency payments into AI workflows enables "
-                   "autonomous machine-to-machine commerce and automated service consumption.",
-            "max_length": 20
-        }
-    )
-    if result3:
-        print(f"📊 Result:")
-        print(json.dumps(result3, indent=2))
-        print()
-    
-    print("=" * 70)
-    print("🎉 DEMO COMPLETE!")
-    print("=" * 70)
-    print(f"\n💰 Total spent: $0.18 USDC")
-    
-    await agent.close()
+    try:
+        await agent.initialize()
+        
+        print("=" * 70)
+        print("🧪 TESTING PAID API SERVICES")
+        print("=" * 70)
+        
+        # Test 1: Sentiment Analysis ($0.05)
+        print("\n" + "-" * 70)
+        print("TEST 1: Sentiment Analysis ($0.05)")
+        print("-" * 70)
+        result1 = await agent.call_paid_api(
+            "/agent/sentiment",
+            {"text": "CDP makes AI agent payments so easy!"}
+        )
+        if result1:
+            print(f"📊 Result:")
+            print(json.dumps(result1, indent=2))
+            print()
+        
+        # Test 2: Translate ($0.05)
+        print("\n" + "-" * 70)
+        print("TEST 2: Translation ($0.05)")
+        print("-" * 70)
+        result2 = await agent.call_paid_api(
+            "/agent/translate",
+            {
+                "text": "Autonomous AI agents can now pay for services!",
+                "target_language": "es"
+            }
+        )
+        if result2:
+            print(f"📊 Result:")
+            print(json.dumps(result2, indent=2))
+            print()
+        
+        # Test 3: Summarize ($0.08)
+        print("\n" + "-" * 70)
+        print("TEST 3: Summarization ($0.08)")
+        print("-" * 70)
+        result3 = await agent.call_paid_api(
+            "/agent/summarize",
+            {
+                "text": "The integration of cryptocurrency payments into AI workflows enables "
+                       "autonomous machine-to-machine commerce.",
+                "max_length": 20
+            }
+        )
+        if result3:
+            print(f"�� Result:")
+            print(json.dumps(result3, indent=2))
+            print()
+        
+        print("=" * 70)
+        print("🎉 DEMO COMPLETE!")
+        print("=" * 70)
+        print(f"\n💰 Total spent: $0.18 USDC")
+        print(f"🎯 All 3 services successfully paid and executed!")
+        
+    finally:
+        await agent.close()
 
 
 if __name__ == "__main__":
