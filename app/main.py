@@ -2,6 +2,14 @@ from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from app.models import (
+    ResearchRequest, LeadGenRequest, ContentGenRequest,
+    CompetitiveRequest, SeoOptimizeRequest, SummarizeRequest,
+    TranslateRequest, SentimentRequest
+)
+from app.services.research import deep_research, competitive_analysis, market_intelligence
+from app.services.content import generate_content, seo_optimize, summarize_content, translate_content
+from app.services.leads import generate_leads, enrich_contact
 import os
 
 app = FastAPI(
@@ -124,3 +132,178 @@ async def run_scrape(
     await check_agent_payment(request, x_agent_id)
     data = await scrape_url(payload.url)
     return {"status": "success", "data": data, "verified": True}
+
+# app/main.py - add this endpoint
+
+@app.post("/agent/research")
+async def research(
+    payload: ResearchRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Deep web research with structured results"""
+    await check_agent_payment(request, x_agent_id, amount=0.10)
+    
+    result = await deep_research(payload.query, payload.depth)
+    return {
+        "status": "success",
+        "query": payload.query,
+        "answer": result["answer"],
+        "sources": result["sources"],
+        "confidence": result["confidence"]
+    }
+
+# ===== RESEARCH & INTELLIGENCE =====
+
+@app.post("/agent/research")
+async def research(
+    payload: ResearchRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Deep web research with structured results and sources"""
+    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("RESEARCH_PRICE", 0.10)))
+    
+    result = await deep_research(payload.query, payload.depth, payload.max_sources)
+    return {
+        "status": "success",
+        "query": payload.query,
+        **result
+    }
+
+@app.post("/agent/competitive")
+async def competitive(
+    payload: CompetitiveRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Competitive intelligence and analysis"""
+    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("COMPETITIVE_PRICE", 0.50)))
+    
+    result = await competitive_analysis(payload.company_domain, payload.analysis_type)
+    return {
+        "status": "success",
+        **result
+    }
+
+@app.get("/agent/market-intel/{topic}")
+async def market_intel(
+    topic: str,
+    timeframe: str = "30d",
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Market trends and intelligence"""
+    await check_agent_payment(request, x_agent_id, amount=0.15)
+    
+    result = await market_intelligence(topic, timeframe)
+    return {
+        "status": "success",
+        **result
+    }
+
+# ===== CONTENT GENERATION =====
+
+@app.post("/agent/generate-content")
+async def gen_content(
+    payload: ContentGenRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Generate SEO-optimized content"""
+    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("CONTENT_GEN_PRICE", 0.20)))
+    
+    result = await generate_content(
+        payload.topic,
+        payload.content_type,
+        payload.tone,
+        payload.word_count,
+        payload.keywords
+    )
+    return {
+        "status": "success",
+        **result
+    }
+
+@app.post("/agent/seo-optimize")
+async def seo_opt(
+    payload: SeoOptimizeRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Optimize content for SEO"""
+    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("SEO_PRICE", 0.15)))
+    
+    result = await seo_optimize(payload.content, payload.target_keywords, payload.optimization_level)
+    return {
+        "status": "success",
+        **result
+    }
+
+@app.post("/agent/summarize")
+async def summarize(
+    payload: SummarizeRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Summarize text or URLs"""
+    await check_agent_payment(request, x_agent_id, amount=0.08)
+    
+    result = await summarize_content(payload.text, payload.urls, payload.max_length)
+    return {
+        "status": "success",
+        **result
+    }
+
+@app.post("/agent/translate")
+async def translate(
+    payload: TranslateRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Translate text to any language"""
+    await check_agent_payment(request, x_agent_id, amount=0.05)
+    
+    result = await translate_content(payload.text, payload.target_language, payload.source_language)
+    return {
+        "status": "success",
+        **result
+    }
+
+# ===== LEAD GENERATION =====
+
+@app.post("/agent/lead-gen")
+async def lead_gen(
+    payload: LeadGenRequest,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Generate qualified leads"""
+    await check_agent_payment(request, x_agent_id, amount=float(os.getenv("LEAD_GEN_PRICE", 0.25)))
+    
+    result = await generate_leads(
+        payload.industry,
+        payload.location,
+        payload.company_size,
+        payload.job_titles,
+        payload.count
+    )
+    return {
+        "status": "success",
+        **result
+    }
+
+@app.post("/agent/enrich/{domain}")
+async def enrich(
+    domain: str,
+    x_agent_id: str = Header(None),
+    request: Request = None
+):
+    """Enrich company/contact data"""
+    await check_agent_payment(request, x_agent_id, amount=0.15)
+    
+    result = await enrich_contact(domain)
+    return {
+        "status": "success",
+        **result
+    }
