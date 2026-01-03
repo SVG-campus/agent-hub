@@ -1,11 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    appFolder: true
+    // Remove appFolder - App Router is default
   },
-  env: {
-    BASE_APP_ID: process.env.BASE_APP_ID || '69585539c63ad876c9081e3f'
-  }
+  headers: async () => [
+    {
+      source: '/(.*)',
+      headers: [
+        {
+          key: 'base:app_id',
+          value: '69585539c63ad876c9081e3f',
+        },
+      ],
+    },
+  ],
 };
 
 export default nextConfig;

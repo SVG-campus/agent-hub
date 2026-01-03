@@ -2,11 +2,24 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+*.html
+*.meta
+*.recommends
+*.yml
+LICENSE
+verifier/node_modules
+verifier/.next
 # C extensions
+*.cjs
+*.js
+*.mjs
+*.ts
+*d.ts
 *.so
-.env
-
+*.env
+*.json
+*.pack
+*.pack.old
 # Distribution / packaging
 .Python
 build/

@@ -1,8 +1,17 @@
-export default function Home() {
+// verifier/app/page.tsx
+'use client';
+import { OnchainKitProvider } from '@coinbase/onchainkit';
+import { Checkout, CheckoutButton } from '@coinbase/onchainkit/checkout';
+
+export default function PaymentPage() {
   return (
-    <main style={{ padding: '2rem', textAlign: 'center' }}>
-      <h1>✅ hour.it.com Base Verifier</h1>
-      <p>App ID: 69585539c63ad876c9081e3f</p>
-    </main>
+    <OnchainKitProvider 
+      apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY} 
+      chain={base}
+    >
+      <Checkout productId="your_product_id_from_cdp_dashboard">
+         <CheckoutButton coinbaseBranded={true} />
+      </Checkout>
+    </OnchainKitProvider>
   );
 }
