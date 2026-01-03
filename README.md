@@ -3,7 +3,6 @@
 **Live**: https://agent-hub-s8xo.onrender.com
 
 ## Pricing
-- **Stripe**: $0.001/call (API Key)
 - **Crypto**: 0.01 USDC (x402, Base chain)
 
 ## MCP Tool
