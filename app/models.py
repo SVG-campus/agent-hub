@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 # Original models
 class ScrapeRequest(BaseModel):
@@ -51,7 +51,8 @@ class SentimentRequest(BaseModel):
 
 class DataExtractionRequest(BaseModel):
     url: str
-    schema: Optional[Dict] = None
+    # 👇 Renamed from 'schema' to 'extraction_schema' to fix Pydantic warning
+    extraction_schema: Optional[Dict[str, Any]] = None
     format: str = "json"
 
 class EmailFinderRequest(BaseModel):
