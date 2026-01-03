@@ -9,6 +9,13 @@ __pycache__/
 LICENSE
 verifier/node_modules
 verifier/.next
+node_modules/.bin/*
+node_modules/scheduler
+node_modules/react-dom
+node_modules/react
+node_modules/*
+node_modules/
+/node_modules
 # C extensions
 *.cjs
 *.js
