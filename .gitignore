@@ -230,3 +230,7 @@ bfg-*.jar
 node_modules/
 .next/
 wallets_db.json
+projects/
+dist/
+build/
+*.egg-info/
