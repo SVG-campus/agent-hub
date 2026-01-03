@@ -9,17 +9,16 @@ from dotenv import load_dotenv
 import httpx
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
-import google.generativeai as genai
+
+# 👇 NEW: Updated Gemini Import
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-# Configure Gemini
+# 👇 NEW: Updated Gemini Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
-else:
-    model = None
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 app = FastAPI(
     title="Agent Hub API",
@@ -121,20 +120,21 @@ async def get_pricing():
 
 
 # ==========================================
-# TIER 1: CORE & DATA ENDPOINTS (REAL LOGIC)
+# TIER 1: CORE & DATA ENDPOINTS
 # ==========================================
 
 @app.post("/agent/sentiment")
 async def sentiment_analysis(request: SentimentRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("sentiment", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
         prompt = f"Analyze the sentiment of this text and respond with ONLY a JSON object containing 'sentiment' (positive/negative/neutral) and 'score' (float between -1 and 1):\n\n{request.text}"
-        response = model.generate_content(prompt)
-        result = eval(response.text.strip())  # Parse JSON response
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        result = eval(response.text.strip())
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -144,12 +144,13 @@ async def sentiment_analysis(request: SentimentRequest, payment_signature: Optio
 async def translate(request: TranslateRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("translate", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
         prompt = f"Translate this text to {request.target_language}. Respond with ONLY the translated text:\n\n{request.text}"
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         return {
             "status": "success",
             "original_text": request.text,
@@ -165,24 +166,24 @@ async def translate(request: TranslateRequest, payment_signature: Optional[str] 
 async def summarize(request: SummarizeRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("summarize", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
-        # If URLs provided, scrape them first
         content = request.text or ""
         if request.urls:
-            async with httpx.AsyncClient() as client:
-                for url in request.urls[:3]:  # Limit to 3 URLs
+            async with httpx.AsyncClient() as c:
+                for url in request.urls[:3]:
                     try:
-                        resp = await client.get(url, timeout=10)
+                        resp = await c.get(url, timeout=10)
                         soup = BeautifulSoup(resp.text, 'html.parser')
                         content += "\n\n" + soup.get_text()[:5000]
                     except:
                         pass
         
         prompt = f"Summarize this content in approximately {request.max_length} words:\n\n{content[:10000]}"
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         return {
             "status": "success",
             "summary": response.text.strip(),
@@ -198,8 +199,8 @@ async def scrape_web(request: ScrapeRequest, payment_signature: Optional[str] = 
     if err := require_payment("scrape", payment_signature): return err
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(request.url, timeout=15, follow_redirects=True)
+        async with httpx.AsyncClient() as c:
+            response = await c.get(request.url, timeout=15, follow_redirects=True)
             soup = BeautifulSoup(response.text, 'html.parser')
             
             return {
@@ -220,21 +221,20 @@ async def scrape_web(request: ScrapeRequest, payment_signature: Optional[str] = 
 async def extract_data(request: DataExtractionRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("extract", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
-        # Scrape the URL first
-        async with httpx.AsyncClient() as client:
-            response = await client.get(request.url, timeout=15)
+        async with httpx.AsyncClient() as c:
+            response = await c.get(request.url, timeout=15)
             soup = BeautifulSoup(response.text, 'html.parser')
             page_content = soup.get_text()[:8000]
         
-        # Use Gemini to extract structured data
         schema_str = str(request.extraction_schema) if request.extraction_schema else "title, description, main_content"
         prompt = f"Extract the following fields from this webpage content: {schema_str}\n\nReturn ONLY a JSON object.\n\nContent:\n{page_content}"
         
-        ai_response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        ai_response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         extracted = eval(ai_response.text.strip())
         
         return {
@@ -251,20 +251,17 @@ async def extract_data(request: DataExtractionRequest, payment_signature: Option
 async def research_topic(request: ResearchRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("research", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
-        # Use DuckDuckGo to find sources
         ddgs = DDGS()
         results = list(ddgs.text(request.query, max_results=request.max_sources))
-        
-        # Compile sources
         sources_text = "\n\n".join([f"Source: {r['title']}\n{r['body']}" for r in results])
         
-        # Generate summary with Gemini
         prompt = f"Based on these search results, provide a comprehensive research summary about: {request.query}\n\nSources:\n{sources_text}"
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         
         return {
             "status": "success",
@@ -281,7 +278,7 @@ async def research_topic(request: ResearchRequest, payment_signature: Optional[s
 async def generate_content(request: ContentGenRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("content_gen", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
@@ -290,7 +287,8 @@ async def generate_content(request: ContentGenRequest, payment_signature: Option
         if keywords_str:
             prompt += f" Include these keywords: {keywords_str}"
         
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         return {
             "status": "success",
             "topic": request.topic,
@@ -306,40 +304,35 @@ async def generate_content(request: ContentGenRequest, payment_signature: Option
 async def code_review(request: CodeReviewRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("code_review", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
         prompt = f"Review this {request.language} code. Check for:"
-        if request.check_security:
-            prompt += " security vulnerabilities,"
-        if request.check_performance:
-            prompt += " performance issues,"
+        if request.check_security: prompt += " security vulnerabilities,"
+        if request.check_performance: prompt += " performance issues,"
         prompt += " and code quality. Return a JSON with 'issues' (array), 'quality_score' (0-100), and 'recommendations'.\n\nCode:\n{request.code}"
         
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         result = eval(response.text.strip())
-        
         return {"status": "success", **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==========================================
-# TIER 2 & 3: BUSINESS LOGIC (REAL AI)
-# ==========================================
-
 @app.post("/agent/seo-optimize")
 async def seo_optimize(request: SeoOptimizeRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("seo_optimize", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
         keywords_str = ", ".join(request.target_keywords)
         prompt = f"Optimize this content for SEO with these keywords: {keywords_str}. Return the optimized version:\n\n{request.content}"
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         
         return {
             "status": "success",
@@ -355,7 +348,7 @@ async def seo_optimize(request: SeoOptimizeRequest, payment_signature: Optional[
 async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("swot", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
@@ -363,9 +356,9 @@ async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] =
         if request.include_recommendations:
             prompt += " Also include 'recommendations' array."
         
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         result = eval(response.text.strip())
-        
         return {"status": "success", "subject": request.subject, "swot": result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -375,26 +368,22 @@ async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] =
 async def competitive_analysis(request: CompetitiveRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("competitive", payment_signature): return err
     
-    if not model:
+    if not client:
         raise HTTPException(status_code=503, detail="Gemini API not configured")
     
     try:
-        # Research the company
         ddgs = DDGS()
         results = list(ddgs.text(f"{request.company_domain} competitors analysis", max_results=5))
         context = "\n".join([r['body'] for r in results])
         
         prompt = f"Based on this research, analyze {request.company_domain}. Return JSON with 'competitors' (array), 'market_position', 'strengths', 'weaknesses'.\n\nResearch:\n{context}"
-        response = model.generate_content(prompt)
+        # 👇 NEW: Updated call syntax
+        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         result = eval(response.text.strip())
-        
         return {"status": "success", "target": request.company_domain, **result, "paid": not TEST_MODE}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# Remaining endpoints use similar patterns - Gemini for AI, DDGS for search, httpx+BS4 for scraping
-# I've shown the pattern for the most important ones. The rest follow the same structure.
 
 if __name__ == "__main__":
     import uvicorn

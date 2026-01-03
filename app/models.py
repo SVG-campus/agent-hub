@@ -51,8 +51,7 @@ class SentimentRequest(BaseModel):
 
 class DataExtractionRequest(BaseModel):
     url: str
-    # 👇 Renamed from 'schema' to 'extraction_schema' to fix Pydantic warning
-    extraction_schema: Optional[Dict[str, Any]] = None
+    extraction_schema: Optional[Dict[str, Any]] = None  # ← Changed from "schema"
     format: str = "json"
 
 class EmailFinderRequest(BaseModel):
