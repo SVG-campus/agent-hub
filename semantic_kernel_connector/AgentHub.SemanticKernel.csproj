@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>AgentHub.SemanticKernel</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>SVG-campus</Authors>
+    <Description>Semantic Kernel plugin for Agent Hub crypto AI services</Description>
+    <PackageTags>semantic-kernel;ai;crypto;usdc</PackageTags>
+    <RepositoryUrl>https://github.com/SVG-campus/agent-hub</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SemanticKernel" Version="1.0.0" />
+  </ItemGroup>
+</Project>
