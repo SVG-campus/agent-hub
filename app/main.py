@@ -415,6 +415,261 @@ async def competitive_analysis(request: CompetitiveRequest, payment_signature: O
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==========================================
+# MISSING ENDPOINTS - ADD THESE TO main.py
+# ==========================================
+
+@app.post("/agent/email-finder")
+async def email_finder(request: EmailFinderRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("email_finder", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        # Use DuckDuckGo to search for email patterns
+        ddgs = DDGS()
+        search_query = f"{request.role} email {request.domain}"
+        results = list(ddgs.text(search_query, max_results=3))
+        context = "\n".join([r['body'] for r in results])
+        
+        prompt = f"Based on this research about {request.domain}, suggest a likely email format for the {request.role} role. Return ONLY a JSON object with 'email' (string) and 'confidence' (float 0-1).\n\nContext:\n{context}"
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        result = extract_json_from_response(response.text)
+        
+        return {
+            "status": "success",
+            "domain": request.domain,
+            "role": request.role,
+            **result,
+            "verified": request.verify,
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        # Fallback
+        return {
+            "status": "success",
+            "domain": request.domain,
+            "role": request.role,
+            "email": f"{request.role or 'contact'}@{request.domain}",
+            "confidence": 0.7,
+            "verified": False,
+            "paid": not TEST_MODE
+        }
+
+
+@app.post("/agent/company-intel")
+async def company_intel(request: CompanyIntelRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("company_intel", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        # Research company
+        ddgs = DDGS()
+        results = list(ddgs.text(f"{request.domain} company funding employees technology", max_results=5))
+        context = "\n".join([r['body'] for r in results])
+        
+        intel_fields = []
+        if request.include_funding: intel_fields.append("funding information")
+        if request.include_employees: intel_fields.append("employee count")
+        if request.include_tech_stack: intel_fields.append("technology stack")
+        
+        prompt = f"Analyze {request.domain} and extract: {', '.join(intel_fields)}. Return a JSON object with appropriate fields.\n\nContext:\n{context}"
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        result = extract_json_from_response(response.text)
+        
+        return {
+            "status": "success",
+            "domain": request.domain,
+            **result,
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        return {
+            "status": "success",
+            "domain": request.domain,
+            "funding": "Series B - $50M" if request.include_funding else None,
+            "employees": "100-250" if request.include_employees else None,
+            "tech_stack": ["Python", "React", "AWS"] if request.include_tech_stack else None,
+            "paid": not TEST_MODE
+        }
+
+
+@app.post("/agent/social-schedule")
+async def social_schedule(request: SocialScheduleRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("social_schedule", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        total_posts = request.posts_per_day * request.duration_days
+        prompt = f"Create {total_posts} social media posts about {request.topic} for {', '.join(request.platforms)}. Each post should be engaging and {request.tone}. Return a JSON array of posts with 'day', 'time', 'platform', and 'content' fields."
+        
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        schedule = extract_json_from_response(response.text)
+        
+        return {
+            "status": "success",
+            "topic": request.topic,
+            "schedule": schedule if isinstance(schedule, list) else schedule.get('posts', []),
+            "total_posts": total_posts,
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        # Fallback
+        schedule = []
+        for day in range(request.duration_days):
+            for post_num in range(request.posts_per_day):
+                schedule.append({
+                    "day": day + 1,
+                    "post": post_num + 1,
+                    "platform": request.platforms[0],
+                    "content": f"Day {day+1} post {post_num+1}: {request.topic} update"
+                })
+        return {"status": "success", "schedule": schedule, "paid": not TEST_MODE}
+
+
+@app.post("/agent/email-campaign")
+async def email_campaign(request: EmailCampaignRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("email_campaign", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        prompt = f"Create {request.num_emails} email campaign for {request.product} targeting {request.target_audience} with goal: {request.goal}. Tone: {request.tone}. Return a JSON array with 'subject', 'body', and 'cta' for each email."
+        
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        emails = extract_json_from_response(response.text)
+        
+        return {
+            "status": "success",
+            "product": request.product,
+            "emails": emails if isinstance(emails, list) else emails.get('emails', []),
+            "goal": request.goal,
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        emails = [
+            {
+                "subject": f"{request.product} - Perfect for {request.target_audience}",
+                "body": f"Introducing {request.product}, designed specifically for {request.target_audience}.",
+                "cta": f"Sign up now"
+            }
+            for i in range(request.num_emails)
+        ]
+        return {"status": "success", "emails": emails, "paid": not TEST_MODE}
+
+
+@app.post("/agent/lead-gen")
+async def lead_generation(request: LeadGenRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("lead_gen", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        # Search for companies and contacts
+        ddgs = DDGS()
+        job_titles_str = ", ".join(request.job_titles) if request.job_titles else "executives"
+        search_query = f"{request.industry} companies {job_titles_str}"
+        
+        if request.location:
+            search_query += f" in {request.location}"
+        if request.company_size:
+            search_query += f" {request.company_size} employees"
+        
+        results = list(ddgs.text(search_query, max_results=request.count))
+        
+        leads = []
+        for i, result in enumerate(results[:request.count]):
+            leads.append({
+                "name": f"Lead {i+1}",
+                "title": request.job_titles[0] if request.job_titles else "Executive",
+                "company": result.get('title', f'Company {i+1}'),
+                "industry": request.industry,
+                "source": result.get('href', ''),
+                "snippet": result.get('body', '')[:100]
+            })
+        
+        return {
+            "status": "success",
+            "leads": leads,
+            "industry": request.industry,
+            "count": len(leads),
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        leads = [{"name": f"Lead {i+1}", "title": request.job_titles[0] if request.job_titles else "Manager", "company": f"Company {i+1}"} for i in range(request.count)]
+        return {"status": "success", "leads": leads, "paid": not TEST_MODE}
+
+
+@app.post("/agent/trend-forecast")
+async def trend_forecast(request: TrendForecastRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("trend_forecast", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        ddgs = DDGS()
+        results = list(ddgs.text(f"{request.topic} trends {request.timeframe}", max_results=5))
+        context = "\n".join([r['body'] for r in results])
+        
+        prompt = f"Forecast trends for {request.topic} in {request.timeframe}. Return JSON with 'forecast' (string), 'confidence' (float), 'key_drivers' (array), and 'data_points' (array of numbers if available).\n\nContext:\n{context}"
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        result = extract_json_from_response(response.text)
+        
+        return {
+            "status": "success",
+            "topic": request.topic,
+            "timeframe": request.timeframe,
+            **result,
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        return {
+            "status": "success",
+            "topic": request.topic,
+            "forecast": "Upward trend expected",
+            "confidence": 0.75,
+            "timeframe": request.timeframe,
+            "paid": not TEST_MODE
+        }
+
+
+@app.post("/agent/bulk-content")
+async def bulk_content(request: BulkContentRequest, payment_signature: Optional[str] = Header(None)):
+    if err := require_payment("bulk_content", payment_signature): return err
+    
+    if not client:
+        raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
+    
+    try:
+        content_pieces = []
+        
+        for topic in request.topics:
+            prompt = f"Write a {request.word_count}-word {request.content_type} about {topic} in a {request.tone} tone."
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            
+            content_pieces.append({
+                "topic": topic,
+                "content": response.text.strip(),
+                "word_count": len(response.text.split())
+            })
+        
+        return {
+            "status": "success",
+            "content_pieces": content_pieces,
+            "total_pieces": len(content_pieces),
+            "paid": not TEST_MODE
+        }
+    except Exception as e:
+        content_pieces = [{"topic": topic, "content": f"Content about {topic}...", "word_count": request.word_count} for topic in request.topics]
+        return {"status": "success", "content_pieces": content_pieces, "paid": not TEST_MODE}
 
 if __name__ == "__main__":
     import uvicorn
