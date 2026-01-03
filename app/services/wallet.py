@@ -1,9 +1,10 @@
 from coinbase.rest import RESTClient
 from web3 import Web3
 import os
-from dotenv import load_dotenv
 import json
 from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -13,23 +14,29 @@ client = RESTClient(
     api_secret=os.getenv("CDP_API_SECRET")
 )
 
-# In-memory wallet storage (replace with database in production)
-WALLETS = {}
+# Persistent JSON storage
+WALLET_FILE = Path("wallets_db.json")
+
+def load_wallets():
+    """Load wallets from JSON file"""
+    if WALLET_FILE.exists():
+        with open(WALLET_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_wallets(wallets):
+    """Save wallets to JSON file"""
+    with open(WALLET_FILE, 'w') as f:
+        json.dump(wallets, f, indent=2)
 
 async def create_agent_wallet(agent_id: str) -> dict:
     """Create a new Base network wallet for an agent"""
     try:
-        # Create wallet on Base (network_id = "base-sepolia" for testnet, "base-mainnet" for prod)
-        wallet_data = {
-            "name": f"agent_{agent_id}",
-            "network_id": "base-sepolia"  # Change to "base-mainnet" for production
-        }
+        wallets = load_wallets()
         
-        # Using CDP SDK to create wallet
-        # Note: You'll need to adjust this based on actual CDP SDK methods
-        wallet_id = f"wallet_{agent_id}_{datetime.now().timestamp()}"
+        wallet_id = f"wallet_{agent_id}_{int(datetime.now().timestamp())}"
         
-        # Generate address (simplified - use actual CDP methods)
+        # Generate address
         w3 = Web3()
         account = w3.eth.account.create()
         
@@ -37,23 +44,30 @@ async def create_agent_wallet(agent_id: str) -> dict:
             "wallet_id": wallet_id,
             "agent_id": agent_id,
             "address": account.address,
+            "private_key": account.key.hex(),  # WARNING: Encrypt in production!
             "network": "base-sepolia",
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
+            "transactions": []
         }
         
-        WALLETS[wallet_id] = wallet_info
+        wallets[wallet_id] = wallet_info
+        save_wallets(wallets)
         
-        return wallet_info
+        # Don't return private key in response
+        response = wallet_info.copy()
+        del response["private_key"]
+        return response
     except Exception as e:
         raise Exception(f"Failed to create wallet: {str(e)}")
 
 async def get_wallet_balance(wallet_id: str) -> dict:
     """Get USDC and ETH balance for a wallet"""
     try:
-        if wallet_id not in WALLETS:
+        wallets = load_wallets()
+        if wallet_id not in wallets:
             raise Exception("Wallet not found")
         
-        wallet = WALLETS[wallet_id]
+        wallet = wallets[wallet_id]
         address = wallet["address"]
         
         # Connect to Base RPC
@@ -97,17 +111,13 @@ async def get_wallet_balance(wallet_id: str) -> dict:
 async def send_transfer(wallet_id: str, to_address: str, amount: float, currency: str = "USDC") -> dict:
     """Send USDC or ETH to another address"""
     try:
-        if wallet_id not in WALLETS:
+        wallets = load_wallets()
+        if wallet_id not in wallets:
             raise Exception("Wallet not found")
         
-        wallet = WALLETS[wallet_id]
+        wallet = wallets[wallet_id]
         
-        # In production, you would:
-        # 1. Load private key from secure storage
-        # 2. Sign transaction
-        # 3. Broadcast via CDP or Web3
-        
-        # Simplified for MVP
+        # Simplified for MVP - generates mock tx
         tx_hash = f"0x{os.urandom(32).hex()}"
         
         transaction = {
@@ -121,9 +131,8 @@ async def send_transfer(wallet_id: str, to_address: str, amount: float, currency
         }
         
         # Store transaction
-        if "transactions" not in wallet:
-            wallet["transactions"] = []
         wallet["transactions"].append(transaction)
+        save_wallets(wallets)
         
         return transaction
     except Exception as e:
@@ -132,12 +141,13 @@ async def send_transfer(wallet_id: str, to_address: str, amount: float, currency
 async def get_transactions(wallet_id: str, limit: int = 10) -> list:
     """Get transaction history for a wallet"""
     try:
-        if wallet_id not in WALLETS:
+        wallets = load_wallets()
+        if wallet_id not in wallets:
             raise Exception("Wallet not found")
         
-        wallet = WALLETS[wallet_id]
+        wallet = wallets[wallet_id]
         transactions = wallet.get("transactions", [])
         
         return transactions[-limit:]
     except Exception as e:
-        raise Exception(f"Faile
+        raise Exception(f"Failed to get transactions: {str(e)}")
