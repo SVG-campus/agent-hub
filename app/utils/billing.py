@@ -1,35 +1,69 @@
+from fastapi import HTTPException, Request
+from typing import Optional
 import os
-from fastapi import HTTPException, Request, Header
-import hashlib
-import uuid
+from dotenv import load_dotenv
 
-COINBASE_BASE_ADDRESS = os.getenv("COINBASE_WALLET_ADDRESS", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
-DEFAULT_PAYMENT_AMOUNT_USD = 0.002
+load_dotenv()
 
-async def check_agent_payment(request: Request, x_agent_id: str = Header(None), amount: float = None):
-    # Generate unique payment address per request/agent
-    request_id = str(uuid.uuid4())
-    
-    # Use specified amount or default
-    final_amount = amount if amount is not None else DEFAULT_PAYMENT_AMOUNT_USD
-    
-    # 402 Payment Required response for x402-aware agents
-    detail = {
-        "error": "Payment Required",
-        "type": "x402",
-        "request_id": request_id,
-        "agent_id": x_agent_id or "anonymous",
-        "amount_usd": final_amount,
-        "amount_usdc": final_amount,
-        "address": COINBASE_BASE_ADDRESS,
-        "chain": "base",
-        "memo": f"{str(x_agent_id)[:8]}-{request_id[:8]}"
+TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
+
+
+def get_service_price(service_id: str) -> float:
+    """Get price for a service from environment variables"""
+    price_map = {
+        "scrape": "SCRAPE_PRICE",
+        "research": "RESEARCH_PRICE",
+        "sentiment": "SENTIMENT_PRICE",
+        "extract_data": "EXTRACT_DATA_PRICE",
+        "find_emails": "FIND_EMAILS_PRICE",
+        "company_intel": "COMPANY_INTEL_PRICE",
+        "generate_content": "CONTENT_GEN_PRICE",
+        "seo_optimize": "SEO_PRICE",
+        "summarize": "SUMMARIZE_PRICE",
+        "translate": "TRANSLATE_PRICE",
+        "bulk_content": "BULK_CONTENT_PRICE",
+        "social_schedule": "SOCIAL_SCHEDULE_PRICE",
+        "email_campaign": "EMAIL_CAMPAIGN_PRICE",
+        "lead_gen": "LEAD_GEN_PRICE",
+        "competitive": "COMPETITIVE_PRICE",
+        "swot": "SWOT_PRICE",
+        "forecast": "FORECAST_PRICE",
+        "code_review": "CODE_REVIEW_PRICE"
     }
     
-    # In production, check if payment headers exist. For MVP, we ALWAYS raise 402 to show the mechanism.
-    # If you want to bypass payment for testing, checking for a secret header would go here.
+    env_var = price_map.get(service_id, "DEFAULT_PRICE")
+    return float(os.getenv(env_var, "0.10"))
+
+
+async def check_agent_payment(
+    request: Request,
+    agent_id: Optional[str],
+    service_id: str = "ai_agent_service"
+) -> dict:
+    """
+    Check payment via x402 protocol
+    Amount is read from .env based on service_id
+    """
     
-    # raise HTTPException(status_code=402, detail=detail)
+    # Get price from environment
+    amount = get_service_price(service_id)
     
-    # FOR TESTING: We will PASS the check so you can test the AI tools without paying immediately
-    return True 
+    # TEST MODE: Skip verification
+    if TEST_MODE:
+        print(f"💰 [TEST MODE] Would charge ${amount:.2f} for {service_id}")
+        return {"status": "test_mode", "amount": amount, "service": service_id}
+    
+    # PRODUCTION MODE: Verify x402 payment
+    # Import here to avoid circular dependency
+    from app.utils.x402_handler import verify_x402_payment, check_wallet_configured
+    
+    if not check_wallet_configured():
+        raise HTTPException(
+            status_code=500,
+            detail="Server wallet not configured"
+        )
+    
+    result = await verify_x402_payment(request, amount, service_id)
+    
+    print(f"✅ Payment verified: ${amount:.2f} for {service_id}")
+    return result
