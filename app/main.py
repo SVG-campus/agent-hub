@@ -13,16 +13,29 @@ from google import genai
 from google.genai import types
 import json
 import re
+from web3 import Web3
 
 load_dotenv()
 
+# ==========================================
+# NETWORK CONFIGURATION - BASE MAINNET
+# ==========================================
+USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # Base Mainnet USDC
+BASE_RPC = "https://mainnet.base.org"  # Base Mainnet RPC
+CHAIN_ID = 8453  # Base Mainnet
+NETWORK_NAME = "Base Mainnet"
+
+# Server Wallet for receiving payments (from your CDP setup)
+SERVER_WALLET = os.getenv("SERVER_WALLET_ADDRESS", "0xDE8A632E7386A919b548352e0CB57DaCE566BbB5")
+
+# AI Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
 client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 app = FastAPI(
     title="Agent Hub API",
-    description="AI-powered API services with x402 payment protocol",
+    description="AI-powered API services with x402 payment protocol on Base Mainnet",
     version="1.0.0",
     servers=[
         {"url": "https://web-production-4833.up.railway.app", "description": "Production Server"},
@@ -31,54 +44,81 @@ app = FastAPI(
 )
 
 # Configuration
-TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
-SERVER_WALLET = os.getenv("SERVER_WALLET_ADDRESS", "0xDE8A632E7386A919b548352e0CB57DaCE566BbB5")
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
-# 🧪 TEMPORARY TEST PRICING
+# 💰 PRODUCTION PRICING
 PRICING = {
-    "sentiment": 0.01,
-    "translate": 0.01,
-    "summarize": 0.01,
-    "extract": 0.01,
-    "scrape": 0.01,
-    "email_finder": 0.01,
-    "company_intel": 0.01,
-    "code_review": 0.01,
-    "research": 0.01,
-    "content_gen": 0.01,
-    "seo_optimize": 0.01,
-    "social_schedule": 0.01,
-    "email_campaign": 0.01,
-    "lead_gen": 0.01,
-    "competitive": 0.01,
-    "swot": 0.01,
-    "trend_forecast": 0.01,
-    "bulk_content": 0.01,
+    "sentiment": 0.05,
+    "translate": 0.05,
+    "summarize": 0.08,
+    "extract": 0.10,
+    "scrape": 0.15,
+    "email_finder": 0.20,
+    "company_intel": 0.25,
+    "code_review": 0.50,
+    "research": 0.30,
+    "content_gen": 0.20,
+    "seo_optimize": 0.15,
+    "social_schedule": 0.40,
+    "email_campaign": 0.35,
+    "lead_gen": 2.00,
+    "competitive": 1.50,
+    "swot": 0.75,
+    "trend_forecast": 1.00,
+    "bulk_content": 1.00,
 }
 
-# 💰 PRODUCTION PRICING (Uncomment when testing is done)
-# PRICING = {
-#     "sentiment": 0.05,
-#     "translate": 0.05,
-#     "summarize": 0.08,
-#     "extract": 0.10,
-#     "scrape": 0.15,
-#     "email_finder": 0.20,
-#     "company_intel": 0.25,
-#     "code_review": 0.50,
-#     "research": 0.30,
-#     "content_gen": 0.20,
-#     "seo_optimize": 0.15,
-#     "social_schedule": 0.40,
-#     "email_campaign": 0.35,
-#     "lead_gen": 2.00,
-#     "competitive": 1.50,
-#     "swot": 0.75,
-#     "trend_forecast": 1.00,
-#     "bulk_content": 1.00,
-# }
+# USDC ABI for verifying transfers
+USDC_ABI = [
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "from", "type": "address"},
+            {"indexed": True, "name": "to", "type": "address"},
+            {"indexed": False, "name": "value", "type": "uint256"}
+        ],
+        "name": "Transfer",
+        "type": "event"
+    }
+]
 
-payment_verifier = PaymentVerifier(SERVER_WALLET)
+def verify_usdc_payment(tx_hash: str, expected_amount: float) -> bool:
+    """Verify USDC payment on Base Mainnet"""
+    try:
+        w3 = Web3(Web3.HTTPProvider(BASE_RPC))
+
+        # Get transaction receipt
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        if not receipt or receipt['status'] != 1:
+            return False
+
+        # Get transaction details
+        tx = w3.eth.get_transaction(tx_hash)
+
+        # Verify it's to our payment wallet OR the USDC contract
+        # (Standard transfers call the contract, but 'to' field is the contract address)
+        if tx['to'].lower() != USDC_CONTRACT.lower():
+            return False
+
+        # Decode USDC transfer logs to find the one to our wallet
+        usdc_contract = w3.eth.contract(address=USDC_CONTRACT, abi=USDC_ABI)
+
+        # Check transfer logs
+        for log in receipt['logs']:
+            if log['address'].lower() == USDC_CONTRACT.lower():
+                try:
+                    decoded = usdc_contract.events.Transfer().process_log(log)
+                    if decoded['args']['to'].lower() == SERVER_WALLET.lower():
+                        amount_usdc = decoded['args']['value'] / 1e6  # USDC has 6 decimals
+                        # Allow 1% slippage/tolerance
+                        return amount_usdc >= expected_amount * 0.99
+                except:
+                    continue
+
+        return False
+    except Exception as e:
+        print(f"Payment verification error: {e}")
+        return False
 
 def extract_json_from_response(text: str) -> dict:
     """Extract JSON from Gemini response, handling markdown code blocks"""
@@ -86,7 +126,7 @@ def extract_json_from_response(text: str) -> dict:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
-    
+
     # Try to parse as JSON
     try:
         return json.loads(text)
@@ -97,12 +137,13 @@ def extract_json_from_response(text: str) -> dict:
             return json.loads(json_match.group())
         raise ValueError(f"Could not extract valid JSON from response: {text[:200]}")
 
+
 def require_payment(service: str, payment_signature: Optional[str] = None) -> Optional[JSONResponse]:
     if TEST_MODE:
         return None
-    
+
     amount = PRICING.get(service, 0.10)
-    
+
     if not payment_signature:
         return JSONResponse(
             status_code=402,
@@ -112,29 +153,30 @@ def require_payment(service: str, payment_signature: Optional[str] = None) -> Op
                     "service": service,
                     "amount_usd": amount,
                     "currency": "USDC",
-                    "network": "Base Sepolia",
+                    "network": NETWORK_NAME,
                     "instructions": {
-                        "step_1": f"Send ${amount} USDC to {SERVER_WALLET} on Base Sepolia network",
+                        "step_1": f"Send ${amount} USDC to {SERVER_WALLET} on {NETWORK_NAME}",
                         "step_2": "Include the transaction hash in PAYMENT-SIGNATURE header",
                         "step_3": "Retry your request with the payment signature"
                     }
                 }
             }
         )
-    
-    result = payment_verifier.verify_payment(payment_signature, amount)
-    
-    if not result["verified"]:
+
+    # Verify payment on Base Mainnet
+    is_valid = verify_usdc_payment(payment_signature, amount)
+
+    if not is_valid:
         return JSONResponse(
             status_code=402,
             content={
                 "detail": {
-                    "error": "Payment processing error",
-                    "message": f"402: {result}"
+                    "error": "Invalid Payment",
+                    "message": "Payment verification failed. Ensure you sent the correct USDC amount on Base Mainnet."
                 }
             }
         )
-    
+
     return None
 
 
@@ -144,33 +186,33 @@ async def root():
         "name": "Agent Hub API",
         "version": "1.0.0",
         "payment_protocol": "x402 (Coinbase CDP)",
-        "network": "Base Sepolia (Testnet)",
+        "network": NETWORK_NAME,
         "currency": "USDC",
         "test_mode": str(TEST_MODE).lower(),
         "server_wallet": SERVER_WALLET,
         "services_available": len(PRICING),
         "gemini_configured": client is not None,
-        "gemini_model": GEMINI_MODEL if client else None,
         "endpoints": {"pricing": "/payment/pricing", "docs": "/docs"}
     }
 
 
 @app.get("/payment/pricing")
 async def get_pricing():
-    return {"currency": "USDC", "network": "Base Sepolia", "services": PRICING, "test_mode": TEST_MODE}
+    return {"currency": "USDC", "network": NETWORK_NAME, "services": PRICING, "test_mode": TEST_MODE}
 
 
 # ==========================================
 # TIER 1: CORE & DATA ENDPOINTS
 # ==========================================
 
+
 @app.post("/agent/sentiment")
 async def sentiment_analysis(request: SentimentRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("sentiment", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         prompt = f"Analyze the sentiment of this text and respond with ONLY a JSON object containing 'sentiment' (positive/negative/neutral) and 'score' (float between -1 and 1). Do not include markdown formatting or code blocks.\n\nText: {request.text}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
@@ -183,10 +225,10 @@ async def sentiment_analysis(request: SentimentRequest, payment_signature: Optio
 @app.post("/agent/translate")
 async def translate(request: TranslateRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("translate", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         prompt = f"Translate this text to {request.target_language}. Respond with ONLY the translated text:\n\n{request.text}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
@@ -204,10 +246,10 @@ async def translate(request: TranslateRequest, payment_signature: Optional[str] 
 @app.post("/agent/summarize")
 async def summarize(request: SummarizeRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("summarize", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         content = request.text or ""
         if request.urls:
@@ -219,7 +261,7 @@ async def summarize(request: SummarizeRequest, payment_signature: Optional[str] 
                         content += "\n\n" + soup.get_text()[:5000]
                     except:
                         pass
-        
+
         prompt = f"Summarize this content in approximately {request.max_length} words:\n\n{content[:10000]}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return {
@@ -235,12 +277,12 @@ async def summarize(request: SummarizeRequest, payment_signature: Optional[str] 
 @app.post("/agent/scrape")
 async def scrape_web(request: ScrapeRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("scrape", payment_signature): return err
-    
+
     try:
         async with httpx.AsyncClient() as c:
             response = await c.get(request.url, timeout=15, follow_redirects=True)
             soup = BeautifulSoup(response.text, 'html.parser')
-            
+
             return {
                 "status": "success",
                 "url": request.url,
@@ -258,22 +300,22 @@ async def scrape_web(request: ScrapeRequest, payment_signature: Optional[str] = 
 @app.post("/agent/extract")
 async def extract_data(request: DataExtractionRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("extract", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         async with httpx.AsyncClient() as c:
             response = await c.get(request.url, timeout=15)
             soup = BeautifulSoup(response.text, 'html.parser')
             page_content = soup.get_text()[:8000]
-        
+
         schema_str = str(request.extraction_schema) if request.extraction_schema else "title, description, main_content"
         prompt = f"Extract the following fields from this webpage content: {schema_str}\n\nReturn ONLY a valid JSON object without markdown formatting or code blocks.\n\nContent:\n{page_content}"
-        
+
         ai_response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         extracted = extract_json_from_response(ai_response.text)
-        
+
         return {
             "status": "success",
             "url": request.url,
@@ -287,18 +329,18 @@ async def extract_data(request: DataExtractionRequest, payment_signature: Option
 @app.post("/agent/research")
 async def research_topic(request: ResearchRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("research", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         ddgs = DDGS()
         results = list(ddgs.text(request.query, max_results=request.max_sources))
         sources_text = "\n\n".join([f"Source: {r['title']}\n{r['body']}" for r in results])
-        
+
         prompt = f"Based on these search results, provide a comprehensive research summary about: {request.query}\n\nSources:\n{sources_text}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        
+
         return {
             "status": "success",
             "query": request.query,
@@ -313,16 +355,16 @@ async def research_topic(request: ResearchRequest, payment_signature: Optional[s
 @app.post("/agent/content-gen")
 async def generate_content(request: ContentGenRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("content_gen", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         keywords_str = ", ".join(request.keywords) if request.keywords else ""
         prompt = f"Write a {request.word_count}-word {request.content_type} about {request.topic} in a {request.tone} tone."
         if keywords_str:
             prompt += f" Include these keywords: {keywords_str}"
-        
+
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return {
             "status": "success",
@@ -338,16 +380,16 @@ async def generate_content(request: ContentGenRequest, payment_signature: Option
 @app.post("/agent/code-review")
 async def code_review(request: CodeReviewRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("code_review", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         prompt = f"Review this {request.language} code. Check for:"
         if request.check_security: prompt += " security vulnerabilities,"
         if request.check_performance: prompt += " performance issues,"
         prompt += f" and code quality. Return ONLY a valid JSON object (no markdown formatting) with 'issues' (array), 'quality_score' (0-100), and 'recommendations' (array).\n\nCode:\n{request.code}"
-        
+
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
         return {"status": "success", **result, "paid": not TEST_MODE}
@@ -358,15 +400,15 @@ async def code_review(request: CodeReviewRequest, payment_signature: Optional[st
 @app.post("/agent/seo-optimize")
 async def seo_optimize(request: SeoOptimizeRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("seo_optimize", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         keywords_str = ", ".join(request.target_keywords)
         prompt = f"Optimize this content for SEO with these keywords: {keywords_str}. Return the optimized version:\n\n{request.content}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        
+
         return {
             "status": "success",
             "optimized_content": response.text.strip(),
@@ -380,15 +422,15 @@ async def seo_optimize(request: SeoOptimizeRequest, payment_signature: Optional[
 @app.post("/agent/swot")
 async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("swot", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         prompt = f"Perform a SWOT analysis for {request.subject} in the {request.industry} industry. Return ONLY a valid JSON object (no markdown formatting) with 'strengths', 'weaknesses', 'opportunities', 'threats' (each as arrays)."
         if request.include_recommendations:
             prompt += " Also include 'recommendations' array."
-        
+
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
         return {"status": "success", "subject": request.subject, "swot": result, "paid": not TEST_MODE}
@@ -399,15 +441,15 @@ async def swot_analysis(request: SWOTRequest, payment_signature: Optional[str] =
 @app.post("/agent/competitive-analysis")
 async def competitive_analysis(request: CompetitiveRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("competitive", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         ddgs = DDGS()
         results = list(ddgs.text(f"{request.company_domain} competitors analysis", max_results=5))
         context = "\n".join([r['body'] for r in results])
-        
+
         prompt = f"Based on this research, analyze {request.company_domain}. Return ONLY a valid JSON object (no markdown formatting) with 'competitors' (array), 'market_position' (string), 'strengths' (array), 'weaknesses' (array).\n\nResearch:\n{context}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
@@ -415,28 +457,25 @@ async def competitive_analysis(request: CompetitiveRequest, payment_signature: O
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ==========================================
-# MISSING ENDPOINTS - ADD THESE TO main.py
-# ==========================================
 
 @app.post("/agent/email-finder")
 async def email_finder(request: EmailFinderRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("email_finder", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         # Use DuckDuckGo to search for email patterns
         ddgs = DDGS()
         search_query = f"{request.role} email {request.domain}"
         results = list(ddgs.text(search_query, max_results=3))
         context = "\n".join([r['body'] for r in results])
-        
+
         prompt = f"Based on this research about {request.domain}, suggest a likely email format for the {request.role} role. Return ONLY a JSON object with 'email' (string) and 'confidence' (float 0-1).\n\nContext:\n{context}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
-        
+
         return {
             "status": "success",
             "domain": request.domain,
@@ -461,25 +500,25 @@ async def email_finder(request: EmailFinderRequest, payment_signature: Optional[
 @app.post("/agent/company-intel")
 async def company_intel(request: CompanyIntelRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("company_intel", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         # Research company
         ddgs = DDGS()
         results = list(ddgs.text(f"{request.domain} company funding employees technology", max_results=5))
         context = "\n".join([r['body'] for r in results])
-        
+
         intel_fields = []
         if request.include_funding: intel_fields.append("funding information")
         if request.include_employees: intel_fields.append("employee count")
         if request.include_tech_stack: intel_fields.append("technology stack")
-        
+
         prompt = f"Analyze {request.domain} and extract: {', '.join(intel_fields)}. Return a JSON object with appropriate fields.\n\nContext:\n{context}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
-        
+
         return {
             "status": "success",
             "domain": request.domain,
@@ -500,17 +539,17 @@ async def company_intel(request: CompanyIntelRequest, payment_signature: Optiona
 @app.post("/agent/social-schedule")
 async def social_schedule(request: SocialScheduleRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("social_schedule", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         total_posts = request.posts_per_day * request.duration_days
         prompt = f"Create {total_posts} social media posts about {request.topic} for {', '.join(request.platforms)}. Each post should be engaging and {request.tone}. Return a JSON array of posts with 'day', 'time', 'platform', and 'content' fields."
-        
+
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         schedule = extract_json_from_response(response.text)
-        
+
         return {
             "status": "success",
             "topic": request.topic,
@@ -535,16 +574,16 @@ async def social_schedule(request: SocialScheduleRequest, payment_signature: Opt
 @app.post("/agent/email-campaign")
 async def email_campaign(request: EmailCampaignRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("email_campaign", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         prompt = f"Create {request.num_emails} email campaign for {request.product} targeting {request.target_audience} with goal: {request.goal}. Tone: {request.tone}. Return a JSON array with 'subject', 'body', and 'cta' for each email."
-        
+
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         emails = extract_json_from_response(response.text)
-        
+
         return {
             "status": "success",
             "product": request.product,
@@ -567,23 +606,23 @@ async def email_campaign(request: EmailCampaignRequest, payment_signature: Optio
 @app.post("/agent/lead-gen")
 async def lead_generation(request: LeadGenRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("lead_gen", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         # Search for companies and contacts
         ddgs = DDGS()
         job_titles_str = ", ".join(request.job_titles) if request.job_titles else "executives"
         search_query = f"{request.industry} companies {job_titles_str}"
-        
+
         if request.location:
             search_query += f" in {request.location}"
         if request.company_size:
             search_query += f" {request.company_size} employees"
-        
+
         results = list(ddgs.text(search_query, max_results=request.count))
-        
+
         leads = []
         for i, result in enumerate(results[:request.count]):
             leads.append({
@@ -594,7 +633,7 @@ async def lead_generation(request: LeadGenRequest, payment_signature: Optional[s
                 "source": result.get('href', ''),
                 "snippet": result.get('body', '')[:100]
             })
-        
+
         return {
             "status": "success",
             "leads": leads,
@@ -610,19 +649,19 @@ async def lead_generation(request: LeadGenRequest, payment_signature: Optional[s
 @app.post("/agent/trend-forecast")
 async def trend_forecast(request: TrendForecastRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("trend_forecast", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         ddgs = DDGS()
         results = list(ddgs.text(f"{request.topic} trends {request.timeframe}", max_results=5))
         context = "\n".join([r['body'] for r in results])
-        
+
         prompt = f"Forecast trends for {request.topic} in {request.timeframe}. Return JSON with 'forecast' (string), 'confidence' (float), 'key_drivers' (array), and 'data_points' (array of numbers if available).\n\nContext:\n{context}"
         response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         result = extract_json_from_response(response.text)
-        
+
         return {
             "status": "success",
             "topic": request.topic,
@@ -644,23 +683,23 @@ async def trend_forecast(request: TrendForecastRequest, payment_signature: Optio
 @app.post("/agent/bulk-content")
 async def bulk_content(request: BulkContentRequest, payment_signature: Optional[str] = Header(None)):
     if err := require_payment("bulk_content", payment_signature): return err
-    
+
     if not client:
         raise HTTPException(status_code=503, detail="Google Gemini API not configured. Set GOOGLE_API_KEY environment variable.")
-    
+
     try:
         content_pieces = []
-        
+
         for topic in request.topics:
             prompt = f"Write a {request.word_count}-word {request.content_type} about {topic} in a {request.tone} tone."
             response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-            
+
             content_pieces.append({
                 "topic": topic,
                 "content": response.text.strip(),
                 "word_count": len(response.text.split())
             })
-        
+
         return {
             "status": "success",
             "content_pieces": content_pieces,
@@ -670,6 +709,7 @@ async def bulk_content(request: BulkContentRequest, payment_signature: Optional[
     except Exception as e:
         content_pieces = [{"topic": topic, "content": f"Content about {topic}...", "word_count": request.word_count} for topic in request.topics]
         return {"status": "success", "content_pieces": content_pieces, "paid": not TEST_MODE}
+
 
 @app.get("/privacy")
 async def privacy_policy():
@@ -683,6 +723,7 @@ async def privacy_policy():
             "contact": "For privacy concerns, contact via GitHub repository."
         }
     }
+
 
 if __name__ == "__main__":
     import uvicorn
