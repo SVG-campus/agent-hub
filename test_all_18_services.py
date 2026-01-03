@@ -1,4 +1,4 @@
-"""Comprehensive test of ALL Agent Hub services on Railway"""
+"""COMPLETE test of ALL 18 Agent Hub services on Railway"""
 import asyncio
 import requests
 import json
@@ -12,7 +12,7 @@ load_dotenv()
 
 USDC_CONTRACT = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 BASE_SEPOLIA_RPC = "https://sepolia.base.org"
-API_URL = "https://web-production-4833.up.railway.app"  # Railway production!
+API_URL = "https://web-production-4833.up.railway.app"
 
 w3 = Web3(Web3.HTTPProvider(BASE_SEPOLIA_RPC))
 
@@ -35,26 +35,34 @@ class CDPPaymentAgent:
 
         # Request ETH for gas
         print("⛽ Requesting testnet ETH for gas...")
-        eth_faucet_tx = await self.cdp_client.evm.request_faucet(
-            address=self.wallet_address,
-            network="base-sepolia",
-            token="eth"
-        )
-        print(f"✅ ETH Faucet TX: https://sepolia.basescan.org/tx/{eth_faucet_tx}")
-        print("⏳ Waiting for ETH confirmation...")
-        w3.eth.wait_for_transaction_receipt(eth_faucet_tx, timeout=120)
-        print("✅ ETH confirmed\n")
+        try:
+            eth_faucet_tx = await self.cdp_client.evm.request_faucet(
+                address=self.wallet_address,
+                network="base-sepolia",
+                token="eth"
+            )
+            print(f"✅ ETH Faucet TX: https://sepolia.basescan.org/tx/{eth_faucet_tx}")
+            print("⏳ Waiting for ETH confirmation...")
+            w3.eth.wait_for_transaction_receipt(eth_faucet_tx, timeout=120)
+            print("✅ ETH confirmed\n")
+        except Exception as e:
+            print(f"⚠️  ETH faucet error (may have hit rate limit): {str(e)}\n")
+            return False
 
         # Request USDC
         print("🚰 Requesting testnet USDC...")
-        usdc_faucet_tx = await self.cdp_client.evm.request_faucet(
-            address=self.wallet_address,
-            network="base-sepolia",
-            token="usdc"
-        )
-        print(f"✅ USDC Faucet TX: https://sepolia.basescan.org/tx/{usdc_faucet_tx}")
-        print("⏳ Waiting for USDC confirmation...")
-        w3.eth.wait_for_transaction_receipt(usdc_faucet_tx, timeout=120)
+        try:
+            usdc_faucet_tx = await self.cdp_client.evm.request_faucet(
+                address=self.wallet_address,
+                network="base-sepolia",
+                token="usdc"
+            )
+            print(f"✅ USDC Faucet TX: https://sepolia.basescan.org/tx/{usdc_faucet_tx}")
+            print("⏳ Waiting for USDC confirmation...")
+            w3.eth.wait_for_transaction_receipt(usdc_faucet_tx, timeout=120)
+        except Exception as e:
+            print(f"⚠️  USDC faucet error (may have hit rate limit): {str(e)}\n")
+            return False
 
         # Check balance
         usdc_abi = [{
@@ -179,7 +187,7 @@ class CDPPaymentAgent:
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 AGENT HUB - COMPREHENSIVE SERVICE TEST (Railway)")
+    print("🚀 AGENT HUB - COMPLETE SERVICE TEST (All 18 Services)")
     print("="*70)
     print(f"🌐 Testing against: {API_URL}")
     print("="*70)
@@ -187,30 +195,38 @@ async def main():
     agent = CDPPaymentAgent()
 
     try:
-        await agent.initialize()
+        initialized = await agent.initialize()
 
-        # Test all services
+        if not initialized:
+            print("\n⚠️  Faucet limit reached. Please wait 24 hours and try again.")
+            print("💡 Tip: You can test locally with TEST_MODE=true to bypass payments.")
+            return
+
+        # Test ALL 18 services
         tests = [
-            # Core Services
-            ("/agent/sentiment", {"text": "AI agents paying for services is revolutionary!"}, "Sentiment Analysis"),
-            ("/agent/translate", {"text": "Hello world", "target_language": "es"}, "Translation"),
-            ("/agent/summarize", {"text": "AI agents can autonomously pay for API services using cryptocurrency on blockchain networks."}, "Summarization"),
+            # Tier 1: Core & Data (8 services)
+            ("/agent/sentiment", {"text": "AI agents paying for services is revolutionary!"}, "1. Sentiment Analysis"),
+            ("/agent/translate", {"text": "Hello world", "target_language": "es"}, "2. Translation"),
+            ("/agent/summarize", {"text": "AI agents can autonomously pay for API services using cryptocurrency on blockchain networks."}, "3. Summarization"),
+            ("/agent/extract", {"url": "https://example.com", "extraction_schema": {"title": "string"}}, "4. Data Extraction"),
+            ("/agent/scrape", {"url": "https://example.com"}, "5. Web Scraping"),
+            ("/agent/email-finder", {"domain": "example.com", "role": "ceo"}, "6. Email Finder"),
+            ("/agent/company-intel", {"domain": "example.com", "include_funding": True}, "7. Company Intelligence"),
+            ("/agent/code-review", {"code": "def hello():\n    print('world')", "language": "python"}, "8. Code Review"),
 
-            # Data Services
-            ("/agent/scrape", {"url": "https://example.com"}, "Web Scraping"),
-            ("/agent/extract", {"url": "https://example.com", "extraction_schema": {"title": "string"}}, "Data Extraction"),
+            # Tier 2: Research & Content (5 services)
+            ("/agent/research", {"query": "AI agent payments", "max_sources": 3}, "9. Research"),
+            ("/agent/content-gen", {"topic": "AI Automation", "word_count": 200}, "10. Content Generation"),
+            ("/agent/seo-optimize", {"content": "AI agents are powerful", "target_keywords": ["AI", "automation"]}, "11. SEO Optimization"),
+            ("/agent/social-schedule", {"topic": "AI agents", "platforms": ["twitter"], "posts_per_day": 2, "duration_days": 3}, "12. Social Media Scheduling"),
+            ("/agent/email-campaign", {"product": "AI Platform", "target_audience": "developers", "goal": "signups", "num_emails": 3}, "13. Email Campaign"),
 
-            # Research & Content
-            ("/agent/research", {"query": "AI agent payments", "max_sources": 3}, "Research"),
-            ("/agent/content-gen", {"topic": "AI Automation", "word_count": 200}, "Content Generation"),
-
-            # Code & SEO
-            ("/agent/code-review", {"code": "def hello():\n    print('world')", "language": "python"}, "Code Review"),
-            ("/agent/seo-optimize", {"content": "AI agents are powerful", "target_keywords": ["AI", "automation"]}, "SEO Optimization"),
-
-            # Business Analysis
-            ("/agent/swot", {"subject": "AI Agents", "industry": "Technology"}, "SWOT Analysis"),
-            ("/agent/competitive-analysis", {"company_domain": "example.com"}, "Competitive Analysis"),
+            # Tier 3: Advanced Business (5 services)
+            ("/agent/lead-gen", {"industry": "technology", "job_titles": ["CTO"], "count": 5}, "14. Lead Generation"),
+            ("/agent/competitive-analysis", {"company_domain": "example.com"}, "15. Competitive Analysis"),
+            ("/agent/swot", {"subject": "AI Agents", "industry": "Technology"}, "16. SWOT Analysis"),
+            ("/agent/trend-forecast", {"topic": "AI adoption", "timeframe": "2025"}, "17. Trend Forecasting"),
+            ("/agent/bulk-content", {"topics": ["AI", "Blockchain"], "content_type": "blog", "word_count": 500}, "18. Bulk Content Generation"),
         ]
 
         results = []
@@ -220,15 +236,15 @@ async def main():
                 results.append((name, "✅ SUCCESS" if result else "❌ FAILED"))
             except Exception as e:
                 print(f"❌ Error: {str(e)}\n")
-                results.append((name, f"❌ ERROR: {str(e)}"))
+                results.append((name, f"❌ ERROR: {str(e)[:50]}"))
 
             await asyncio.sleep(2)  # Rate limit between requests
 
         print("\n" + "="*70)
-        print("📊 TEST SUMMARY")
+        print("📊 COMPLETE TEST SUMMARY")
         print("="*70)
         for name, status in results:
-            print(f"{status:15} | {name}")
+            print(f"{status:20} | {name}")
 
         print("\n" + "="*70)
         print(f"💰 Total Spent: ${agent.total_spent:.2f} USDC")
